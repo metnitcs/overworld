@@ -31,7 +31,8 @@
       "Bash(node -e \"const p=require\\('./server/package.json'\\);console.log\\('deps',p.dependencies\\);console.log\\('dev',p.devDependencies\\)\")",
       "Bash(npx prisma *)",
       "Bash(npm -w @asura/shared run test)",
-      "Bash(git -c user.email=\"metnit@bda.co.th\" -c user.name=\"metnit\" commit -q -m \"feat\\(slice-4\\): extract @asura/shared \\(types + data + logic\\) as single source of truth\" -m \"Adds shared/ workspace; git mv client/src/game/{types,data,logic} -> shared/src/. Client now imports from '@asura/shared' \\(12 import sites rewritten\\). Wired via vite alias + tsconfig path \\(Windows-symlink-independent\\). Server will consume the same module in slice 6. Removes the data/types/logic duplication that prompted Phase 2. Root test chain: shared 22 tests, client+server passWithNoTests until tests land.\" -m \"Co-Authored-By: Claude Opus 4.7 \\(1M context\\) <noreply@anthropic.com>\")"
+      "Bash(git -c user.email=\"metnit@bda.co.th\" -c user.name=\"metnit\" commit -q -m \"feat\\(slice-4\\): extract @asura/shared \\(types + data + logic\\) as single source of truth\" -m \"Adds shared/ workspace; git mv client/src/game/{types,data,logic} -> shared/src/. Client now imports from '@asura/shared' \\(12 import sites rewritten\\). Wired via vite alias + tsconfig path \\(Windows-symlink-independent\\). Server will consume the same module in slice 6. Removes the data/types/logic duplication that prompted Phase 2. Root test chain: shared 22 tests, client+server passWithNoTests until tests land.\" -m \"Co-Authored-By: Claude Opus 4.7 \\(1M context\\) <noreply@anthropic.com>\")",
+      "Bash(docker exec *)"
     ]
   }
 }
