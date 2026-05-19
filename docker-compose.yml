@@ -1,0 +1,37 @@
+# Dev infra for asura-online Phase 2 (see PLAN.md §4).
+# Usage: docker compose up -d   (needs Docker Desktop running)
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: asura-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: asura
+      POSTGRES_USER: asura
+      POSTGRES_PASSWORD: dev
+    ports:
+      - '5432:5432'
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U asura -d asura']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: asura-redis
+    restart: unless-stopped
+    ports:
+      - '6379:6379'
+
+  adminer:
+    image: adminer
+    container_name: asura-adminer
+    restart: unless-stopped
+    ports:
+      - '8080:8080'
+
+volumes:
+  pgdata:

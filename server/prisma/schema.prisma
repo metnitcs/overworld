@@ -1,0 +1,73 @@
+// Prisma schema for asura-online (Phase 2). See PLAN.md §3 Phase 2.
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id         String      @id @default(cuid())
+  username   String      @unique
+  password   String // bcrypt hash
+  email      String?     @unique
+  createdAt  DateTime    @default(now())
+  characters Character[]
+}
+
+model Character {
+  id          String          @id @default(cuid())
+  userId      String
+  user        User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name        String
+  raceId      String
+  classId     String
+  lv          Int             @default(1)
+  exp         Int             @default(0)
+  hp          Int
+  maxHp       Int
+  mp          Int
+  maxMp       Int
+  atk         Int
+  def         Int
+  spd         Int
+  gold        Int             @default(100)
+  mapId       String          @default("village")
+  px          Int             @default(5)
+  py          Int             @default(5)
+  steps       Int             @default(0)
+  equipWeapon String?
+  equipArmor  String?
+  plus        Json // { "sword-1_w": 5, ... }
+  inventory   InventoryItem[]
+  battleLogs  BattleLog[]
+  updatedAt   DateTime        @updatedAt
+
+  @@index([userId])
+}
+
+model InventoryItem {
+  id          String    @id @default(cuid())
+  characterId String
+  character   Character @relation(fields: [characterId], references: [id], onDelete: Cascade)
+  itemKey     String // e.g. 'potion-s', 'sword-1'
+  qty         Int
+
+  @@unique([characterId, itemKey])
+}
+
+model BattleLog {
+  id           String    @id @default(cuid())
+  characterId  String
+  character    Character @relation(fields: [characterId], references: [id], onDelete: Cascade)
+  enemyName    String
+  result       String // 'win' | 'lose' | 'flee'
+  expGained    Int
+  goldGained   Int
+  itemsDropped String[] // ['silk', ...]
+  createdAt    DateTime  @default(now())
+
+  @@index([characterId])
+}

@@ -21,7 +21,15 @@
       "Bash(npm -w @asura/client run build)",
       "Bash(npm -w @asura/server run build)",
       "Bash(node -e \"import\\('./server/dist/app.js'\\).then\\(async m=>{const a=m.buildServer\\(\\);const r=await a.inject\\({method:'GET',url:'/health'}\\);console.log\\(r.statusCode, r.body\\);await a.close\\(\\);}\\)\")",
-      "Bash(git add *)"
+      "Bash(git add *)",
+      "WebFetch(domain:api.anthropic.com)",
+      "Bash(file webfetch-1779210451013-0t858g.bin)",
+      "Bash(cp webfetch-1779210451013-0t858g.bin design.gz)",
+      "Bash(gzip -dc design.gz)",
+      "Bash(mkdir -p design_extracted)",
+      "Bash(tar -xf design_out -C design_extracted)",
+      "Bash(node -e \"const p=require\\('./server/package.json'\\);console.log\\('deps',p.dependencies\\);console.log\\('dev',p.devDependencies\\)\")",
+      "Bash(npx prisma *)"
     ]
   }
 }
