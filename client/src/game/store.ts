@@ -7,12 +7,11 @@ import type {
   BattleEnemy,
   ChatMessage,
   ChatKind,
-} from './types'
-import { CLASSES, MAPS, ITEMS, RECIPES } from './data'
-import { deriveStats } from './logic/stats'
-import { applyExp } from './logic/progression'
-import { scaleEnemy, rollLoot } from './logic/combat'
-import { resolveEnhance } from './logic/enhance'
+} from '@asura/shared'
+import {
+  CLASSES, MAPS, ITEMS, RECIPES,
+  deriveStats, applyExp, scaleEnemy, rollLoot, resolveEnhance,
+} from '@asura/shared'
 
 interface SpawnedMonster {
   x: number

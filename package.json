@@ -4,6 +4,7 @@
   "version": "0.2.0",
   "description": "อสูรเว็บ Online — monorepo (client + server) for Phase 2 backend",
   "workspaces": [
+    "shared",
     "client",
     "server"
   ],
@@ -11,6 +12,6 @@
     "dev:client": "npm -w @asura/client run dev",
     "dev:server": "npm -w @asura/server run dev",
     "build": "npm -w @asura/client run build && npm -w @asura/server run build",
-    "test": "npm -w @asura/client run test && npm -w @asura/server run test"
+    "test": "npm -w @asura/shared run test && npm -w @asura/client run test && npm -w @asura/server run test"
   }
 }

@@ -1,4 +1,4 @@
-import type { ModalType } from '../game/types'
+import type { ModalType } from '@asura/shared'
 import { InventoryModal } from './modals/InventoryModal'
 import { CraftModal } from './modals/CraftModal'
 import { EnhanceModal } from './modals/EnhanceModal'

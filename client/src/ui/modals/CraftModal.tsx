@@ -1,5 +1,5 @@
 import { useGame } from '../../game/store'
-import { RECIPES, ITEMS } from '../../game/data'
+import { RECIPES, ITEMS } from '@asura/shared'
 
 export function CraftModal() {
   const game = useGame(s => s.game)

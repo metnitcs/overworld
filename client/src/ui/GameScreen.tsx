@@ -1,6 +1,6 @@
 import { useEffect } from 'react'
 import { useGame, seedChat } from '../game/store'
-import { MAPS, RACES, CLASSES, expForLv } from '../game/data'
+import { MAPS, RACES, CLASSES, expForLv } from '@asura/shared'
 import { PhaserGame } from '../game/PhaserGame'
 import { ChatPanel } from './ChatPanel'
 

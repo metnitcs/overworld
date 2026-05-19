@@ -8,11 +8,13 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
+      '@asura/shared': path.resolve(__dirname, '../shared/src/index.ts'),
     },
   },
   server: { port: 5173, open: true },
   test: {
     environment: 'node',
     include: ['src/**/*.test.ts'],
+    passWithNoTests: true,
   },
 })

@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useGame } from '../game/store'
-import { CLASSES, RACES, ITEMS } from '../game/data'
-import { resolveAttack } from '../game/logic/combat'
+import { CLASSES, RACES, ITEMS, resolveAttack } from '@asura/shared'
 
 interface FloatNum {
   id: number

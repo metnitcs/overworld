@@ -1,7 +1,6 @@
 import { useState } from 'react'
 import { useGame } from '../../game/store'
-import { ITEMS } from '../../game/data'
-import type { ItemType } from '../../game/types'
+import { ITEMS, type ItemType } from '@asura/shared'
 
 type Tab = 'all' | 'equip' | 'consume' | 'mat'
 

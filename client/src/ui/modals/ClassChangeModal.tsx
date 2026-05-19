@@ -1,5 +1,5 @@
 import { useGame } from '../../game/store'
-import { CLASSES } from '../../game/data'
+import { CLASSES } from '@asura/shared'
 
 const COST = 500
 

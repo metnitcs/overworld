@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useGame } from '../game/store'
-import { RACES, CLASSES } from '../game/data'
+import { RACES, CLASSES } from '@asura/shared'
 
 export function CreateScreen() {
   const [raceId, setRaceId] = useState(RACES[0].id)

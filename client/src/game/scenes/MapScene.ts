@@ -1,6 +1,6 @@
 import Phaser from 'phaser'
 import { useGame } from '../store'
-import { MAPS, RACES, CLASSES } from '../data'
+import { MAPS, RACES, CLASSES } from '@asura/shared'
 
 const TILE = 64
 

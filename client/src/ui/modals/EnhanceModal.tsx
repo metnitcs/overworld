@@ -1,5 +1,5 @@
 import { useGame } from '../../game/store'
-import { ITEMS } from '../../game/data'
+import { ITEMS } from '@asura/shared'
 
 export function EnhanceModal() {
   const game = useGame(s => s.game)
