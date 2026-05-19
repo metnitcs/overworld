@@ -1,0 +1,1642 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>อสูรเว็บ Online — เกม MMORPG เล่นบนเว็บ</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg-dark: #1a0f1f;
+    --bg-panel: #2a1a35;
+    --bg-panel-light: #3a2548;
+    --accent-red: #c93838;
+    --accent-gold: #e8c547;
+    --accent-purple: #9b5bd6;
+    --text-light: #f0e6d2;
+    --text-dim: #a89c8b;
+    --hp-color: #2dc653;
+    --mp-color: #4f8ed6;
+    --exp-color: #e8c547;
+    --border: #5c3a72;
+  }
+  body {
+    font-family: 'Tahoma', 'Trebuchet MS', sans-serif;
+    background: linear-gradient(135deg, #1a0f1f, #2a1838);
+    color: var(--text-light);
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    user-select: none;
+    overflow: hidden;
+  }
+  #game {
+    width: 960px;
+    max-width: 100vw;
+    height: 640px;
+    max-height: 100vh;
+    background: var(--bg-dark);
+    border: 3px solid var(--border);
+    border-radius: 8px;
+    box-shadow: 0 0 40px rgba(155, 91, 214, 0.4);
+    position: relative;
+    overflow: hidden;
+  }
+  .screen { position: absolute; inset: 0; display: none; }
+  .screen.active { display: flex; flex-direction: column; }
+
+  /* ========== TITLE SCREEN ========== */
+  #title-screen {
+    background: radial-gradient(ellipse at center, #3a1a4a, #1a0f1f);
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+  }
+  .title-logo {
+    font-size: 72px;
+    font-weight: bold;
+    background: linear-gradient(180deg, #ffd97d 0%, #c93838 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    text-shadow: 0 4px 20px rgba(201, 56, 56, 0.6);
+    margin-bottom: 10px;
+    letter-spacing: 4px;
+  }
+  .title-sub {
+    color: var(--accent-gold);
+    font-size: 20px;
+    margin-bottom: 50px;
+    letter-spacing: 8px;
+  }
+  .btn {
+    background: linear-gradient(180deg, #5c3a72, #3a2248);
+    color: var(--text-light);
+    border: 2px solid var(--accent-gold);
+    padding: 12px 32px;
+    font-size: 16px;
+    font-family: inherit;
+    cursor: pointer;
+    border-radius: 4px;
+    margin: 6px;
+    transition: all 0.15s;
+    min-width: 180px;
+  }
+  .btn:hover { background: linear-gradient(180deg, #7a4d96, #5c3a72); transform: translateY(-1px); }
+  .btn:active { transform: translateY(1px); }
+  .btn.small { padding: 6px 14px; font-size: 13px; min-width: auto; }
+  .btn.danger { border-color: var(--accent-red); }
+  .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  /* ========== CREATE CHARACTER ========== */
+  #create-screen { padding: 24px; }
+  .create-title {
+    text-align: center;
+    font-size: 24px;
+    color: var(--accent-gold);
+    margin-bottom: 16px;
+  }
+  .create-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; flex: 1; }
+  .create-box {
+    background: var(--bg-panel);
+    border: 2px solid var(--border);
+    border-radius: 6px;
+    padding: 14px;
+    overflow-y: auto;
+  }
+  .create-box h3 { color: var(--accent-gold); margin-bottom: 10px; font-size: 16px; }
+  .option-card {
+    background: var(--bg-panel-light);
+    border: 2px solid transparent;
+    border-radius: 4px;
+    padding: 10px;
+    margin-bottom: 6px;
+    cursor: pointer;
+    transition: all 0.15s;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .option-card:hover { background: #4a2f5c; }
+  .option-card.selected { border-color: var(--accent-gold); background: #4a2f5c; }
+  .option-card .emoji { font-size: 28px; }
+  .option-card .info { flex: 1; }
+  .option-card .name { font-weight: bold; color: var(--accent-gold); }
+  .option-card .desc { font-size: 11px; color: var(--text-dim); }
+  .name-input {
+    width: 100%;
+    background: var(--bg-panel-light);
+    border: 2px solid var(--border);
+    color: var(--text-light);
+    padding: 8px;
+    font-family: inherit;
+    font-size: 14px;
+    border-radius: 4px;
+    margin-bottom: 10px;
+  }
+  .create-footer { text-align: center; margin-top: 12px; }
+
+  /* ========== MAIN GAME ========== */
+  #game-screen { flex-direction: row; }
+  #map-area {
+    flex: 1;
+    background: #0d1419;
+    position: relative;
+    overflow: hidden;
+  }
+  #map-canvas {
+    width: 100%;
+    height: 100%;
+    image-rendering: pixelated;
+    display: block;
+  }
+  #map-name {
+    position: absolute;
+    top: 12px;
+    left: 12px;
+    background: rgba(26, 15, 31, 0.85);
+    border: 1px solid var(--accent-gold);
+    color: var(--accent-gold);
+    padding: 4px 12px;
+    border-radius: 4px;
+    font-size: 13px;
+    pointer-events: none;
+  }
+  #combat-hint {
+    position: absolute;
+    bottom: 12px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(26, 15, 31, 0.85);
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    padding: 4px 12px;
+    border-radius: 4px;
+    font-size: 11px;
+    pointer-events: none;
+  }
+  #side-panel {
+    width: 280px;
+    background: var(--bg-panel);
+    border-left: 2px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    padding: 10px;
+    gap: 8px;
+    overflow-y: auto;
+  }
+  .stat-row { display: flex; justify-content: space-between; font-size: 12px; margin: 2px 0; }
+  .stat-row .label { color: var(--text-dim); }
+  .stat-row .val { color: var(--accent-gold); font-weight: bold; }
+  .bar {
+    width: 100%;
+    height: 10px;
+    background: #000;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    overflow: hidden;
+    margin: 2px 0 4px;
+    position: relative;
+  }
+  .bar-fill { height: 100%; transition: width 0.3s; }
+  .bar .bar-label {
+    position: absolute;
+    width: 100%;
+    text-align: center;
+    font-size: 10px;
+    line-height: 10px;
+    color: white;
+    text-shadow: 0 0 3px black;
+  }
+  .panel-section {
+    background: var(--bg-panel-light);
+    padding: 8px;
+    border-radius: 4px;
+    border: 1px solid var(--border);
+  }
+  .panel-section h4 {
+    color: var(--accent-gold);
+    font-size: 12px;
+    margin-bottom: 6px;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 3px;
+  }
+  .menu-btns { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
+  .menu-btns .btn { padding: 6px; font-size: 11px; min-width: auto; margin: 0; }
+  #log-window {
+    background: #0a0612;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 6px;
+    height: 80px;
+    overflow-y: auto;
+    font-size: 11px;
+    color: var(--text-dim);
+  }
+  #log-window .log-good { color: var(--hp-color); }
+  #log-window .log-bad { color: var(--accent-red); }
+  #log-window .log-gold { color: var(--accent-gold); }
+
+  /* ========== BATTLE SCREEN ========== */
+  #battle-screen {
+    background: linear-gradient(180deg, #2a1838 0%, #4a2870 50%, #1a0d28 100%);
+    flex-direction: column;
+    padding: 16px;
+  }
+  #battle-screen::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background-image: radial-gradient(2px 2px at 20% 30%, white, transparent),
+                      radial-gradient(2px 2px at 60% 70%, white, transparent),
+                      radial-gradient(1px 1px at 80% 20%, white, transparent),
+                      radial-gradient(1px 1px at 40% 80%, white, transparent),
+                      radial-gradient(2px 2px at 90% 50%, white, transparent);
+    background-size: 200px 200px;
+    opacity: 0.3;
+    pointer-events: none;
+  }
+  .battle-arena {
+    flex: 1;
+    display: flex;
+    justify-content: space-around;
+    align-items: center;
+    position: relative;
+    z-index: 1;
+  }
+  .fighter {
+    text-align: center;
+    background: rgba(26, 15, 31, 0.7);
+    border: 2px solid var(--border);
+    border-radius: 8px;
+    padding: 14px;
+    min-width: 200px;
+    position: relative;
+  }
+  .fighter.dim { opacity: 0.4; }
+  .fighter.hit { animation: hitshake 0.4s; }
+  .fighter.flash { animation: flash 0.3s; }
+  @keyframes hitshake {
+    0%, 100% { transform: translateX(0); }
+    20% { transform: translateX(-8px); }
+    40% { transform: translateX(8px); }
+    60% { transform: translateX(-4px); }
+    80% { transform: translateX(4px); }
+  }
+  @keyframes flash {
+    0%, 100% { filter: brightness(1); }
+    50% { filter: brightness(2.5); }
+  }
+  .fighter .sprite {
+    font-size: 80px;
+    margin-bottom: 8px;
+    display: block;
+  }
+  .fighter .fname { color: var(--accent-gold); font-weight: bold; margin-bottom: 4px; font-size: 14px; }
+  .fighter .flvl { color: var(--text-dim); font-size: 11px; margin-bottom: 6px; }
+  .fighter .fbar { width: 180px; margin: 2px auto; }
+  .vs-text {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    font-size: 48px;
+    color: var(--accent-red);
+    text-shadow: 0 0 20px rgba(201, 56, 56, 0.8);
+    font-weight: bold;
+    opacity: 0.6;
+    z-index: 0;
+  }
+  .floating-num {
+    position: absolute;
+    font-size: 28px;
+    font-weight: bold;
+    pointer-events: none;
+    animation: floatup 1s ease-out forwards;
+    text-shadow: 0 0 4px black, 2px 2px 0 black;
+    z-index: 10;
+  }
+  @keyframes floatup {
+    0% { opacity: 1; transform: translateY(0); }
+    100% { opacity: 0; transform: translateY(-60px); }
+  }
+  .battle-controls {
+    background: rgba(26, 15, 31, 0.95);
+    border: 2px solid var(--border);
+    border-radius: 8px;
+    padding: 12px;
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr 1fr;
+    gap: 8px;
+    z-index: 2;
+  }
+  .battle-controls .btn { margin: 0; min-width: auto; }
+  #battle-log {
+    background: rgba(0, 0, 0, 0.7);
+    border-radius: 4px;
+    padding: 8px;
+    font-size: 12px;
+    height: 50px;
+    overflow-y: auto;
+    margin-bottom: 8px;
+    color: var(--text-light);
+    z-index: 2;
+  }
+  #battle-log div { margin-bottom: 2px; }
+
+  /* ========== MODALS ========== */
+  .modal-backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.75);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    z-index: 100;
+  }
+  .modal-backdrop.active { display: flex; }
+  .modal {
+    background: var(--bg-panel);
+    border: 2px solid var(--accent-gold);
+    border-radius: 8px;
+    padding: 18px;
+    width: 560px;
+    max-height: 540px;
+    display: flex;
+    flex-direction: column;
+  }
+  .modal h2 {
+    color: var(--accent-gold);
+    text-align: center;
+    margin-bottom: 12px;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 6px;
+    font-size: 18px;
+  }
+  .modal-body { flex: 1; overflow-y: auto; padding: 4px; }
+  .modal-footer { display: flex; justify-content: center; margin-top: 12px; gap: 8px; }
+  .inventory-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 6px;
+  }
+  .item-card {
+    background: var(--bg-panel-light);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 8px;
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    cursor: pointer;
+    transition: all 0.15s;
+    font-size: 12px;
+  }
+  .item-card:hover { border-color: var(--accent-gold); }
+  .item-card.equipped { border-color: var(--hp-color); }
+  .item-card .item-emoji { font-size: 24px; }
+  .item-card .item-info { flex: 1; }
+  .item-card .item-name { color: var(--accent-gold); font-weight: bold; font-size: 12px; }
+  .item-card .item-stat { color: var(--text-dim); font-size: 10px; }
+  .item-plus { color: var(--accent-red); font-weight: bold; }
+
+  .craft-recipe {
+    background: var(--bg-panel-light);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 10px;
+    margin-bottom: 6px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .craft-recipe .recipe-info { flex: 1; font-size: 12px; }
+  .craft-recipe .recipe-name { color: var(--accent-gold); font-weight: bold; margin-bottom: 4px; }
+  .craft-recipe .recipe-mat { color: var(--text-dim); font-size: 11px; }
+  .can-craft { color: var(--hp-color)!important; }
+  .cant-craft { color: var(--accent-red)!important; }
+
+  .class-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 6px;
+  }
+
+  /* SHOP/HEAL etc */
+  .shop-item {
+    background: var(--bg-panel-light);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 10px;
+    margin-bottom: 6px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .shop-item .shop-info { flex: 1; }
+  .shop-item .shop-name { color: var(--accent-gold); font-weight: bold; font-size: 13px; }
+  .shop-item .shop-desc { color: var(--text-dim); font-size: 11px; }
+  .gold-text { color: var(--accent-gold); }
+
+  /* Responsive */
+  @media (max-width: 980px) {
+    #game { width: 100vw; height: 100vh; border-radius: 0; }
+    #side-panel { width: 240px; }
+  }
+  @media (max-width: 720px) {
+    #game-screen { flex-direction: column; }
+    #side-panel { width: 100%; max-height: 200px; }
+    .battle-arena { flex-direction: column; gap: 10px; }
+    .fighter { min-width: 160px; }
+    .vs-text { display: none; }
+  }
+</style>
+</head>
+<body>
+<div id="game">
+
+  <!-- =================== TITLE SCREEN =================== -->
+  <div id="title-screen" class="screen active">
+    <div class="title-logo">อสูรเว็บ</div>
+    <div class="title-sub">O N L I N E</div>
+    <button class="btn" onclick="startNewGame()">เริ่มเกมใหม่</button>
+    <button class="btn" onclick="loadGame()" id="load-btn">โหลดเกม</button>
+    <button class="btn" onclick="showHelp()">วิธีเล่น</button>
+    <div style="position:absolute; bottom: 12px; color: var(--text-dim); font-size: 11px;">
+      เกม MMORPG สไตล์เก่า ได้รับแรงบันดาลใจจากเกมเว็บไทย
+    </div>
+  </div>
+
+  <!-- =================== CREATE CHARACTER =================== -->
+  <div id="create-screen" class="screen">
+    <div class="create-title">สร้างตัวละครใหม่</div>
+    <div class="create-grid">
+      <div class="create-box">
+        <h3>เลือกเผ่า</h3>
+        <div id="race-list"></div>
+      </div>
+      <div class="create-box">
+        <h3>เลือกอาชีพ</h3>
+        <div id="class-list"></div>
+      </div>
+    </div>
+    <div class="create-footer">
+      <input type="text" class="name-input" id="char-name" placeholder="ชื่อตัวละคร (ไม่เกิน 12 ตัว)" maxlength="12">
+      <button class="btn" onclick="confirmCharacter()">ยืนยัน เริ่มผจญภัย!</button>
+      <button class="btn small" onclick="goTitle()">กลับ</button>
+    </div>
+  </div>
+
+  <!-- =================== MAIN GAME SCREEN =================== -->
+  <div id="game-screen" class="screen">
+    <div id="map-area">
+      <canvas id="map-canvas" width="640" height="640"></canvas>
+      <div id="map-name">ทุ่งซากุระ</div>
+      <div id="combat-hint">⬆⬇⬅➡ หรือ WASD เพื่อเดิน · ชนมอนเพื่อต่อสู้</div>
+    </div>
+    <div id="side-panel">
+      <div class="panel-section">
+        <h4 id="char-header">— ตัวละคร —</h4>
+        <div class="stat-row"><span class="label">เผ่า</span><span class="val" id="info-race">-</span></div>
+        <div class="stat-row"><span class="label">อาชีพ</span><span class="val" id="info-class">-</span></div>
+        <div class="stat-row"><span class="label">Lv</span><span class="val" id="info-lv">1</span></div>
+        <div style="font-size:11px;color:var(--text-dim);">HP</div>
+        <div class="bar"><div class="bar-fill" id="bar-hp" style="background:var(--hp-color);width:100%"></div><div class="bar-label" id="lbl-hp">0/0</div></div>
+        <div style="font-size:11px;color:var(--text-dim);">MP</div>
+        <div class="bar"><div class="bar-fill" id="bar-mp" style="background:var(--mp-color);width:100%"></div><div class="bar-label" id="lbl-mp">0/0</div></div>
+        <div style="font-size:11px;color:var(--text-dim);">EXP</div>
+        <div class="bar"><div class="bar-fill" id="bar-exp" style="background:var(--exp-color);width:0%"></div><div class="bar-label" id="lbl-exp">0/0</div></div>
+      </div>
+
+      <div class="panel-section">
+        <h4>— ค่าสถานะ —</h4>
+        <div class="stat-row"><span class="label">⚔ ATK</span><span class="val" id="info-atk">0</span></div>
+        <div class="stat-row"><span class="label">🛡 DEF</span><span class="val" id="info-def">0</span></div>
+        <div class="stat-row"><span class="label">⚡ SPD</span><span class="val" id="info-spd">0</span></div>
+        <div class="stat-row"><span class="label">💰 ทอง</span><span class="val gold-text" id="info-gold">0</span></div>
+      </div>
+
+      <div class="panel-section">
+        <h4>— เมนู —</h4>
+        <div class="menu-btns">
+          <button class="btn" onclick="openInventory()">🎒 กระเป๋า</button>
+          <button class="btn" onclick="openCraft()">⚒ คราฟ</button>
+          <button class="btn" onclick="openEnhance()">✨ ตีบวก</button>
+          <button class="btn" onclick="openClassChange()">🔄 เปลี่ยนอาชีพ</button>
+          <button class="btn" onclick="openHeal()">💊 ฟื้น HP</button>
+          <button class="btn" onclick="openMapMenu()">🗺 เปลี่ยนแมพ</button>
+          <button class="btn" onclick="saveGame()">💾 เซฟ</button>
+          <button class="btn danger" onclick="goTitle()">🚪 ออก</button>
+        </div>
+      </div>
+
+      <div class="panel-section">
+        <h4>— ข่าวการผจญภัย —</h4>
+        <div id="log-window"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- =================== BATTLE SCREEN =================== -->
+  <div id="battle-screen" class="screen">
+    <div id="battle-log"></div>
+    <div class="battle-arena">
+      <div class="fighter" id="player-fighter">
+        <span class="sprite" id="player-sprite">⚔️</span>
+        <div class="fname" id="bf-pname">ผู้เล่น</div>
+        <div class="flvl" id="bf-plvl">Lv 1</div>
+        <div style="font-size:10px;color:var(--text-dim);">HP</div>
+        <div class="bar fbar"><div class="bar-fill" id="bf-php" style="background:var(--hp-color)"></div><div class="bar-label" id="bf-phpl">0/0</div></div>
+        <div style="font-size:10px;color:var(--text-dim);">MP</div>
+        <div class="bar fbar"><div class="bar-fill" id="bf-pmp" style="background:var(--mp-color)"></div><div class="bar-label" id="bf-pmpl">0/0</div></div>
+      </div>
+      <div class="vs-text">VS</div>
+      <div class="fighter" id="enemy-fighter">
+        <span class="sprite" id="enemy-sprite">👹</span>
+        <div class="fname" id="bf-ename">ศัตรู</div>
+        <div class="flvl" id="bf-elvl">Lv 1</div>
+        <div style="font-size:10px;color:var(--text-dim);">HP</div>
+        <div class="bar fbar"><div class="bar-fill" id="bf-ehp" style="background:var(--hp-color)"></div><div class="bar-label" id="bf-ehpl">0/0</div></div>
+      </div>
+    </div>
+    <div class="battle-controls">
+      <button class="btn" onclick="bAttack()" id="bbtn-atk">⚔ โจมตี</button>
+      <button class="btn" onclick="bSkill()" id="bbtn-skill">✨ สกิล</button>
+      <button class="btn" onclick="bItem()" id="bbtn-item">🧪 ไอเทม</button>
+      <button class="btn" onclick="bRun()" id="bbtn-run">🏃 หนี</button>
+    </div>
+  </div>
+
+  <!-- =================== MODAL =================== -->
+  <div class="modal-backdrop" id="modal">
+    <div class="modal">
+      <h2 id="modal-title">หัวข้อ</h2>
+      <div class="modal-body" id="modal-body"></div>
+      <div class="modal-footer" id="modal-footer">
+        <button class="btn" onclick="closeModal()">ปิด</button>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+// =============================================================
+// GAME DATA
+// =============================================================
+const RACES = [
+  { id: 'mara',    name: 'เผ่ามาร',     emoji: '😈', hp: 110, mp: 80,  atk: 12, def: 8,  spd: 10, desc: 'พลังโจมตีและ HP สูง' },
+  { id: 'angel',   name: 'เผ่านางฟ้า',   emoji: '👼', hp: 90,  mp: 120, atk: 10, def: 9,  spd: 11, desc: 'MP เยอะ ฟื้นฟูเก่ง' },
+  { id: 'beast',   name: 'เผ่าสัตว์อสูร', emoji: '🐺', hp: 100, mp: 70,  atk: 11, def: 10, spd: 13, desc: 'รวดเร็ว ป้องกันดี' },
+  { id: 'god',     name: 'เผ่าเทพ',      emoji: '👑', hp: 95,  mp: 100, atk: 13, def: 8,  spd: 9,  desc: 'พลังเวทย์รุนแรง' },
+  { id: 'yaksa',   name: 'เผ่ายักษ์',    emoji: '👺', hp: 130, mp: 60,  atk: 14, def: 12, spd: 7,  desc: 'อึดสุด พลังถึก' },
+  { id: 'phaya',   name: 'เผ่าพญามาร',  emoji: '🦹', hp: 105, mp: 90,  atk: 13, def: 9,  spd: 11, desc: 'สมดุลระดับสูง' },
+];
+
+const CLASSES = [
+  { id: 'berserk',   name: 'นักดาบเดือด',  emoji: '⚔️', atk: 6, def: 2, spd: 1, mp: 0,  skill: { name: 'ฟันสายฟ้า',  mp: 10, mult: 2.0, type: 'phys' } },
+  { id: 'gunslinger',name: 'มือปืนเงา',    emoji: '🔫', atk: 5, def: 1, spd: 3, mp: 0,  skill: { name: 'กระสุนเจาะ',  mp: 8,  mult: 1.7, type: 'phys' } },
+  { id: 'assassin',  name: 'อัสซาซิน',     emoji: '🗡️', atk: 5, def: 1, spd: 4, mp: 0,  skill: { name: 'ลอบสังหาร',   mp: 8,  mult: 1.9, type: 'phys' } },
+  { id: 'heavenkn',  name: 'อัศวินสวรรค์', emoji: '🛡️', atk: 4, def: 4, spd: 1, mp: 0,  skill: { name: 'ฟันศักดิ์สิทธิ์', mp: 10, mult: 1.8, type: 'holy' } },
+  { id: 'musician',  name: 'นักดนตรีศักดิ์สิทธิ์', emoji: '🎵', atk: 3, def: 2, spd: 2, mp: 15, skill: { name: 'บทเพลงสมาน', mp: 12, mult: 0,  type: 'heal' } },
+  { id: 'shaman',    name: 'ชาแมนเร้นลับ',  emoji: '🔮', atk: 6, def: 1, spd: 2, mp: 10, skill: { name: 'สายฟ้าโบราณ',  mp: 12, mult: 2.2, type: 'magic' } },
+];
+
+const MAPS = {
+  sakura: {
+    name: 'ทุ่งซากุระ', minLv: 1, maxLv: 5,
+    tiles: ['🌸','🌿','🌱'], bg: '#d4a4c8',
+    monsters: [
+      { name: 'ดักแด้น้อย',  emoji: '🐛', lv: 1, hp: 25,  atk: 5,  def: 2,  spd: 5, exp: 8,  gold: 5,  drop: { item: 'silk', chance: 0.6 } },
+      { name: 'ผีเสื้อ',     emoji: '🦋', lv: 2, hp: 35,  atk: 7,  def: 3,  spd: 8, exp: 12, gold: 7,  drop: { item: 'silk', chance: 0.5 } },
+      { name: 'ดอกพิษ',     emoji: '🌺', lv: 3, hp: 50,  atk: 9,  def: 4,  spd: 4, exp: 16, gold: 10, drop: { item: 'pollen', chance: 0.7 } },
+    ]
+  },
+  forest: {
+    name: 'ป่ามืดเร้นลับ', minLv: 5, maxLv: 12,
+    tiles: ['🌲','🌳','🍄'], bg: '#5a8a4a',
+    monsters: [
+      { name: 'หมาป่าเงา',   emoji: '🐺', lv: 6,  hp: 85,  atk: 14, def: 6, spd: 11, exp: 30,  gold: 18, drop: { item: 'fang',  chance: 0.5 } },
+      { name: 'งูยักษ์',      emoji: '🐍', lv: 8,  hp: 110, atk: 18, def: 7, spd: 9,  exp: 42,  gold: 24, drop: { item: 'scale', chance: 0.55 } },
+      { name: 'เห็ดอาถรรพ์', emoji: '🍄', lv: 10, hp: 140, atk: 20, def: 10, spd: 6, exp: 60,  gold: 35, drop: { item: 'mushroom', chance: 0.6 } },
+    ]
+  },
+  volcano: {
+    name: 'ภูเขาไฟอสูร', minLv: 12, maxLv: 25,
+    tiles: ['🌋','🔥','🪨'], bg: '#8a3a2a',
+    monsters: [
+      { name: 'อสูรลาวา',     emoji: '👹', lv: 14, hp: 220, atk: 28, def: 14, spd: 10, exp: 110, gold: 60,  drop: { item: 'magma',   chance: 0.5 } },
+      { name: 'มังกรไฟน้อย',  emoji: '🐉', lv: 18, hp: 320, atk: 38, def: 18, spd: 12, exp: 180, gold: 90,  drop: { item: 'dragon-scale', chance: 0.4 } },
+      { name: 'ผีไฟ',         emoji: '👻', lv: 20, hp: 280, atk: 42, def: 12, spd: 16, exp: 220, gold: 120, drop: { item: 'soul',    chance: 0.5 } },
+    ]
+  },
+  hell: {
+    name: 'นรกลึก', minLv: 25, maxLv: 50,
+    tiles: ['🔥','💀','🩸'], bg: '#3a0e1a',
+    monsters: [
+      { name: 'ปีศาจครึ่งดวงจันทร์', emoji: '🦇', lv: 28, hp: 480, atk: 60, def: 24, spd: 18, exp: 360, gold: 200, drop: { item: 'demon-horn', chance: 0.45 } },
+      { name: 'พญายมราช',          emoji: '☠️', lv: 35, hp: 720, atk: 82, def: 32, spd: 20, exp: 560, gold: 320, drop: { item: 'soul-gem',  chance: 0.3 } },
+      { name: 'จอมมาร',            emoji: '😈', lv: 45, hp: 1100, atk: 110, def: 44, spd: 22, exp: 900, gold: 600, drop: { item: 'crown',     chance: 0.2 } },
+    ]
+  }
+};
+
+const ITEMS = {
+  // Materials
+  'silk':         { name: 'ไหมดักแด้',      emoji: '🧵', type: 'mat',  desc: 'วัตถุดิบเย็บผ้า' },
+  'pollen':       { name: 'เกสรพิษ',        emoji: '🌼', type: 'mat',  desc: 'วัตถุดิบเวทย์' },
+  'fang':         { name: 'เขี้ยวหมาป่า',    emoji: '🦷', type: 'mat',  desc: 'แข็งและคม' },
+  'scale':        { name: 'เกล็ดงู',         emoji: '🐍', type: 'mat',  desc: 'เหนียวทนทาน' },
+  'mushroom':     { name: 'เห็ดอาถรรพ์',    emoji: '🍄', type: 'mat',  desc: 'มีพลังเวทย์' },
+  'magma':        { name: 'หินลาวา',        emoji: '🪨', type: 'mat',  desc: 'ร้อนระอุ' },
+  'dragon-scale': { name: 'เกล็ดมังกร',     emoji: '🔶', type: 'mat',  desc: 'แข็งดั่งเพชร' },
+  'soul':         { name: 'ดวงวิญญาณ',     emoji: '👻', type: 'mat',  desc: 'พลังเร้นลับ' },
+  'demon-horn':   { name: 'เขาปีศาจ',       emoji: '🦴', type: 'mat',  desc: 'พลังมืด' },
+  'soul-gem':     { name: 'อัญมณีวิญญาณ',   emoji: '💎', type: 'mat',  desc: 'หายากสุดๆ' },
+  'crown':        { name: 'มงกุฎมาร',       emoji: '👑', type: 'mat',  desc: 'พลังจอมมาร' },
+  'plus-stone':   { name: 'หินตีบวก',       emoji: '💠', type: 'mat',  desc: 'เพิ่มพลังอาวุธ' },
+
+  // Consumables
+  'potion-s':  { name: 'ยาฟื้น HP ขนาดเล็ก', emoji: '🧪', type: 'consume', heal: 50,  desc: 'ฟื้น HP 50' },
+  'potion-m':  { name: 'ยาฟื้น HP ขนาดกลาง', emoji: '🍶', type: 'consume', heal: 150, desc: 'ฟื้น HP 150' },
+  'potion-l':  { name: 'ยาฟื้น HP ขนาดใหญ่', emoji: '🏺', type: 'consume', heal: 400, desc: 'ฟื้น HP 400' },
+  'ether-s':   { name: 'น้ำมนตร์ขนาดเล็ก',   emoji: '💧', type: 'consume', healMp: 30, desc: 'ฟื้น MP 30' },
+
+  // Weapons (crafted)
+  'sword-1':   { name: 'ดาบไหม',         emoji: '🗡️', type: 'weapon', atk: 8,   desc: 'อาวุธพื้นฐาน' },
+  'sword-2':   { name: 'ดาบเขี้ยว',       emoji: '⚔️', type: 'weapon', atk: 18,  desc: 'อาวุธป่า' },
+  'sword-3':   { name: 'ดาบลาวา',        emoji: '🔥', type: 'weapon', atk: 38,  desc: 'อาวุธภูเขาไฟ' },
+  'sword-4':   { name: 'ดาบจอมมาร',      emoji: '👿', type: 'weapon', atk: 80,  desc: 'อาวุธในตำนาน' },
+  'gun-1':     { name: 'ปืนพก',          emoji: '🔫', type: 'weapon', atk: 7,   desc: 'อาวุธมือปืน' },
+  'gun-2':     { name: 'ปืนเขี้ยวงู',     emoji: '🐍', type: 'weapon', atk: 17,  desc: 'อาวุธมือปืน' },
+  'gun-3':     { name: 'ปืนเพลิงมังกร',  emoji: '🐉', type: 'weapon', atk: 36,  desc: 'อาวุธมือปืน' },
+  'staff-1':   { name: 'ไม้เท้าซากุระ',   emoji: '🌸', type: 'weapon', atk: 6,  matk: 4,  desc: 'อาวุธชาแมน' },
+  'staff-2':   { name: 'ไม้เท้าเห็ด',     emoji: '🍄', type: 'weapon', atk: 14, matk: 10, desc: 'อาวุธชาแมน' },
+  'staff-3':   { name: 'ไม้เท้าวิญญาณ',  emoji: '👻', type: 'weapon', atk: 30, matk: 24, desc: 'อาวุธชาแมน' },
+  // Armor
+  'armor-1':   { name: 'เกราะไหม',        emoji: '👕', type: 'armor',  def: 5,  desc: 'เกราะพื้นฐาน' },
+  'armor-2':   { name: 'เกราะเกล็ด',      emoji: '🦺', type: 'armor',  def: 12, desc: 'เกราะป่า' },
+  'armor-3':   { name: 'เกราะลาวา',       emoji: '🥋', type: 'armor',  def: 26, desc: 'เกราะภูเขาไฟ' },
+  'armor-4':   { name: 'เกราะมงกุฎมาร',  emoji: '👘', type: 'armor',  def: 55, desc: 'เกราะตำนาน' },
+};
+
+// Craft recipes: result <- materials + gold
+const RECIPES = [
+  { result: 'sword-1', mats: { 'silk': 3, 'pollen': 2 },                gold: 50,   classReq: ['berserk','heavenkn','assassin'] },
+  { result: 'sword-2', mats: { 'fang': 5, 'scale': 3 },                  gold: 200,  classReq: ['berserk','heavenkn','assassin'] },
+  { result: 'sword-3', mats: { 'magma': 5, 'dragon-scale': 2 },          gold: 800,  classReq: ['berserk','heavenkn','assassin'] },
+  { result: 'sword-4', mats: { 'demon-horn': 4, 'soul-gem': 1 },         gold: 3000, classReq: ['berserk','heavenkn','assassin'] },
+  { result: 'gun-1',   mats: { 'silk': 3, 'pollen': 2 },                gold: 50,   classReq: ['gunslinger'] },
+  { result: 'gun-2',   mats: { 'fang': 5, 'scale': 3 },                  gold: 200,  classReq: ['gunslinger'] },
+  { result: 'gun-3',   mats: { 'magma': 5, 'dragon-scale': 2 },          gold: 800,  classReq: ['gunslinger'] },
+  { result: 'staff-1', mats: { 'silk': 2, 'pollen': 4 },                gold: 50,   classReq: ['shaman','musician'] },
+  { result: 'staff-2', mats: { 'mushroom': 5, 'scale': 2 },              gold: 200,  classReq: ['shaman','musician'] },
+  { result: 'staff-3', mats: { 'soul': 4, 'dragon-scale': 1 },           gold: 800,  classReq: ['shaman','musician'] },
+  { result: 'armor-1', mats: { 'silk': 5 },                              gold: 60 },
+  { result: 'armor-2', mats: { 'scale': 6, 'fang': 2 },                  gold: 220 },
+  { result: 'armor-3', mats: { 'magma': 6, 'soul': 1 },                  gold: 850 },
+  { result: 'armor-4', mats: { 'crown': 1, 'soul-gem': 1 },              gold: 3500 },
+];
+
+// =============================================================
+// GAME STATE
+// =============================================================
+let game = null;
+let selectedRace = null;
+let selectedClass = null;
+
+function newGame(){
+  game = {
+    name: 'นักผจญภัย',
+    raceId: 'mara',
+    classId: 'berserk',
+    lv: 1, exp: 0,
+    hp: 0, maxHp: 0,
+    mp: 0, maxMp: 0,
+    gold: 100,
+    inventory: { 'potion-s': 3 },
+    equipWeapon: null,
+    equipArmor: null,
+    plus: {}, // itemKey+slot -> +N
+    map: 'sakura',
+    px: 5, py: 5,
+    steps: 0,
+    inBattle: false,
+  };
+}
+
+function expForLv(lv){ return 20 + Math.floor(Math.pow(lv, 2.2) * 5); }
+
+function recalcStats(){
+  const r = RACES.find(x=>x.id===game.raceId);
+  const c = CLASSES.find(x=>x.id===game.classId);
+  const lvBonus = (game.lv-1);
+  const baseHp = r.hp + lvBonus * 12;
+  const baseMp = r.mp + lvBonus * 6 + c.mp;
+  let atk = r.atk + c.atk + Math.floor(lvBonus * 1.5);
+  let def = r.def + c.def + Math.floor(lvBonus * 1.0);
+  let spd = r.spd + c.spd + Math.floor(lvBonus * 0.4);
+
+  // Equipment
+  if (game.equipWeapon) {
+    const it = ITEMS[game.equipWeapon];
+    const plus = game.plus[game.equipWeapon+'_w'] || 0;
+    atk += (it.atk || 0) + plus * 3;
+  }
+  if (game.equipArmor) {
+    const it = ITEMS[game.equipArmor];
+    const plus = game.plus[game.equipArmor+'_a'] || 0;
+    def += (it.def || 0) + plus * 2;
+  }
+  game.maxHp = baseHp;
+  game.maxMp = baseMp;
+  if (game.hp === 0 || game.hp > game.maxHp) game.hp = game.maxHp;
+  if (game.mp === 0 || game.mp > game.maxMp) game.mp = game.maxMp;
+  game.atk = atk;
+  game.def = def;
+  game.spd = spd;
+}
+
+function gainExp(amount){
+  game.exp += amount;
+  while (game.exp >= expForLv(game.lv)) {
+    game.exp -= expForLv(game.lv);
+    game.lv += 1;
+    log(`🎉 เลเวลอัพ! ตอนนี้ Lv ${game.lv}`, 'gold');
+    recalcStats();
+    game.hp = game.maxHp;
+    game.mp = game.maxMp;
+  }
+  updateUI();
+}
+
+// =============================================================
+// UI HELPERS
+// =============================================================
+function $(id){ return document.getElementById(id); }
+function show(id){
+  document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
+  $(id).classList.add('active');
+}
+function log(msg, cls=''){
+  const div = document.createElement('div');
+  if (cls) div.className = 'log-' + cls;
+  div.textContent = msg;
+  $('log-window').appendChild(div);
+  $('log-window').scrollTop = $('log-window').scrollHeight;
+}
+
+function updateUI(){
+  if (!game) return;
+  const r = RACES.find(x=>x.id===game.raceId);
+  const c = CLASSES.find(x=>x.id===game.classId);
+  $('char-header').textContent = `— ${game.name} —`;
+  $('info-race').textContent = r ? r.name : '-';
+  $('info-class').textContent = c ? c.name : '-';
+  $('info-lv').textContent = game.lv;
+  $('info-atk').textContent = game.atk;
+  $('info-def').textContent = game.def;
+  $('info-spd').textContent = game.spd;
+  $('info-gold').textContent = game.gold.toLocaleString();
+  $('bar-hp').style.width = (game.hp/game.maxHp*100)+'%';
+  $('lbl-hp').textContent = `${game.hp}/${game.maxHp}`;
+  $('bar-mp').style.width = (game.mp/game.maxMp*100)+'%';
+  $('lbl-mp').textContent = `${game.mp}/${game.maxMp}`;
+  const need = expForLv(game.lv);
+  $('bar-exp').style.width = (game.exp/need*100)+'%';
+  $('lbl-exp').textContent = `${game.exp}/${need}`;
+  $('map-name').textContent = MAPS[game.map].name;
+}
+
+// =============================================================
+// TITLE SCREEN
+// =============================================================
+function showHelp(){
+  openModalCustom('วิธีเล่น', `
+    <div style="font-size:13px; line-height:1.8;">
+      <p style="color:var(--accent-gold); margin-bottom:8px;">🎮 การควบคุม</p>
+      <p>• ใช้ ⬆⬇⬅➡ หรือ WASD เพื่อเดินตัวละครบนแมพ</p>
+      <p>• เดินชนมอนสเตอร์เพื่อเข้าสู่ฉากต่อสู้แบบเทิร์น</p>
+      <p>• ในต่อสู้: โจมตี, ใช้สกิล (เปลือง MP), ไอเทม, หรือหนี</p>
+      <br>
+      <p style="color:var(--accent-gold); margin-bottom:8px;">⚙ ระบบเกม</p>
+      <p>• <b>เผ่า</b> กำหนดค่าสถานะพื้นฐาน เลือกได้ครั้งเดียว</p>
+      <p>• <b>อาชีพ</b> กำหนดสกิลและสไตล์การต่อสู้ เปลี่ยนได้ภายหลัง</p>
+      <p>• <b>คราฟ</b> รวมวัตถุดิบจากมอนสเตอร์ + ทอง = อาวุธ/เกราะ</p>
+      <p>• <b>ตีบวก</b> ใช้หินตีบวกเพิ่ม +1 ถึง +10 ให้อาวุธ (มีโอกาสล้มเหลว!)</p>
+      <p>• <b>เปลี่ยนแมพ</b> ไปแมพยากกว่าเพื่อล่ามอนเก่งกว่า</p>
+      <br>
+      <p style="color:var(--accent-red);">⚠ อย่าลืมเซฟเกมบ่อยๆ!</p>
+    </div>
+  `);
+}
+
+function startNewGame(){
+  newGame();
+  // Reset selections
+  selectedRace = 'mara';
+  selectedClass = 'berserk';
+  renderRaceList();
+  renderClassList();
+  $('char-name').value = '';
+  show('create-screen');
+}
+
+function loadGame(){
+  const data = localStorage.getItem('demoOnline_save');
+  if (!data) { alert('ไม่พบเซฟเกม'); return; }
+  try {
+    game = JSON.parse(data);
+    recalcStats();
+    show('game-screen');
+    updateUI();
+    drawMap();
+    log('โหลดเกมสำเร็จ', 'good');
+  } catch(e){ alert('เซฟเกมเสียหาย'); }
+}
+
+function goTitle(){
+  show('title-screen');
+  $('load-btn').disabled = !localStorage.getItem('demoOnline_save');
+}
+
+// =============================================================
+// CHARACTER CREATION
+// =============================================================
+function renderRaceList(){
+  const html = RACES.map(r => `
+    <div class="option-card ${selectedRace===r.id?'selected':''}" onclick="selectRace('${r.id}')">
+      <span class="emoji">${r.emoji}</span>
+      <div class="info">
+        <div class="name">${r.name}</div>
+        <div class="desc">${r.desc} · HP ${r.hp} ATK ${r.atk} DEF ${r.def}</div>
+      </div>
+    </div>
+  `).join('');
+  $('race-list').innerHTML = html;
+}
+function renderClassList(){
+  const html = CLASSES.map(c => `
+    <div class="option-card ${selectedClass===c.id?'selected':''}" onclick="selectClass('${c.id}')">
+      <span class="emoji">${c.emoji}</span>
+      <div class="info">
+        <div class="name">${c.name}</div>
+        <div class="desc">สกิล: ${c.skill.name} · ATK+${c.atk} DEF+${c.def}</div>
+      </div>
+    </div>
+  `).join('');
+  $('class-list').innerHTML = html;
+}
+function selectRace(id){ selectedRace = id; renderRaceList(); }
+function selectClass(id){ selectedClass = id; renderClassList(); }
+
+function confirmCharacter(){
+  const name = $('char-name').value.trim() || 'นักผจญภัย';
+  game.name = name;
+  game.raceId = selectedRace;
+  game.classId = selectedClass;
+  recalcStats();
+  game.hp = game.maxHp;
+  game.mp = game.maxMp;
+  show('game-screen');
+  updateUI();
+  drawMap();
+  log(`ยินดีต้อนรับ ${name}! เริ่มผจญภัยที่ ${MAPS[game.map].name}`, 'gold');
+  log('💡 เดินชนมอนเพื่อต่อสู้ ใช้ WASD หรือลูกศร', 'good');
+}
+
+// =============================================================
+// MAP / MOVEMENT
+// =============================================================
+const TILE_SIZE = 64;
+const MAP_W = 10;
+const MAP_H = 10;
+let mapMonsters = []; // {x,y,monster,emoji}
+
+function spawnMonsters(){
+  mapMonsters = [];
+  const map = MAPS[game.map];
+  const numMons = 5 + Math.floor(Math.random()*3);
+  const occupied = new Set([`${game.px},${game.py}`]);
+  for (let i=0; i<numMons; i++) {
+    let x,y, tries=0;
+    do {
+      x = Math.floor(Math.random()*MAP_W);
+      y = Math.floor(Math.random()*MAP_H);
+      tries++;
+    } while (occupied.has(`${x},${y}`) && tries<50);
+    occupied.add(`${x},${y}`);
+    const mon = map.monsters[Math.floor(Math.random()*map.monsters.length)];
+    mapMonsters.push({ x, y, monster: mon });
+  }
+}
+
+function drawMap(){
+  const canvas = $('map-canvas');
+  const ctx = canvas.getContext('2d');
+  const map = MAPS[game.map];
+  const W = canvas.width, H = canvas.height;
+
+  // Background
+  ctx.fillStyle = map.bg || '#2a3a4a';
+  ctx.fillRect(0,0,W,H);
+
+  // Decorative tile pattern
+  ctx.font = '40px serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  for (let y=0; y<MAP_H; y++) {
+    for (let x=0; x<MAP_W; x++) {
+      // Grid stipe
+      ctx.fillStyle = (x+y)%2===0 ? 'rgba(0,0,0,0.08)' : 'rgba(255,255,255,0.04)';
+      ctx.fillRect(x*TILE_SIZE, y*TILE_SIZE, TILE_SIZE, TILE_SIZE);
+
+      // Decorative tiles (use hash so consistent)
+      const h = (x*7 + y*13 + game.map.length*3) % 17;
+      if (h < 4) {
+        const tile = map.tiles[h % map.tiles.length];
+        ctx.fillStyle = 'rgba(0,0,0,0.5)';
+        ctx.font = '32px serif';
+        ctx.fillText(tile, x*TILE_SIZE + TILE_SIZE/2, y*TILE_SIZE + TILE_SIZE/2 + 4);
+      }
+    }
+  }
+
+  // Grid lines
+  ctx.strokeStyle = 'rgba(0,0,0,0.15)';
+  ctx.lineWidth = 1;
+  for (let i=0; i<=MAP_W; i++) {
+    ctx.beginPath(); ctx.moveTo(i*TILE_SIZE, 0); ctx.lineTo(i*TILE_SIZE, H); ctx.stroke();
+  }
+  for (let i=0; i<=MAP_H; i++) {
+    ctx.beginPath(); ctx.moveTo(0, i*TILE_SIZE); ctx.lineTo(W, i*TILE_SIZE); ctx.stroke();
+  }
+
+  // Monsters
+  ctx.font = '40px serif';
+  for (const m of mapMonsters) {
+    // Shadow
+    ctx.fillStyle = 'rgba(0,0,0,0.4)';
+    ctx.beginPath();
+    ctx.ellipse(m.x*TILE_SIZE + TILE_SIZE/2, m.y*TILE_SIZE + TILE_SIZE - 8, 16, 6, 0, 0, Math.PI*2);
+    ctx.fill();
+    ctx.fillText(m.monster.emoji, m.x*TILE_SIZE + TILE_SIZE/2, m.y*TILE_SIZE + TILE_SIZE/2 + 4);
+  }
+
+  // Player
+  const r = RACES.find(x=>x.id===game.raceId);
+  const c = CLASSES.find(x=>x.id===game.classId);
+  ctx.fillStyle = 'rgba(0,0,0,0.5)';
+  ctx.beginPath();
+  ctx.ellipse(game.px*TILE_SIZE + TILE_SIZE/2, game.py*TILE_SIZE + TILE_SIZE - 8, 18, 7, 0, 0, Math.PI*2);
+  ctx.fill();
+
+  // Player sprite = race + class overlay
+  ctx.font = '38px serif';
+  ctx.fillText(r.emoji, game.px*TILE_SIZE + TILE_SIZE/2, game.py*TILE_SIZE + TILE_SIZE/2 + 4);
+  // Small class icon on shoulder
+  ctx.font = '20px serif';
+  ctx.fillText(c.emoji, game.px*TILE_SIZE + TILE_SIZE/2 + 18, game.py*TILE_SIZE + TILE_SIZE/2 - 14);
+
+  // Player highlight
+  ctx.strokeStyle = '#e8c547';
+  ctx.lineWidth = 2;
+  ctx.strokeRect(game.px*TILE_SIZE+2, game.py*TILE_SIZE+2, TILE_SIZE-4, TILE_SIZE-4);
+}
+
+function tryMove(dx, dy){
+  if (!game || game.inBattle) return;
+  if ($('modal').classList.contains('active')) return;
+  const nx = game.px + dx;
+  const ny = game.py + dy;
+  if (nx<0||nx>=MAP_W||ny<0||ny>=MAP_H) return;
+  // Check if monster on tile
+  const mon = mapMonsters.find(m=>m.x===nx && m.y===ny);
+  game.px = nx; game.py = ny;
+  game.steps += 1;
+  drawMap();
+  if (mon) {
+    // Start battle!
+    setTimeout(()=>startBattle(mon), 200);
+  }
+}
+
+document.addEventListener('keydown', e=>{
+  if (!game) return;
+  if ($('modal').classList.contains('active')) return;
+  if ($('game-screen').classList.contains('active')) {
+    if (e.key==='ArrowUp'||e.key==='w'||e.key==='W'){ tryMove(0,-1); e.preventDefault(); }
+    else if (e.key==='ArrowDown'||e.key==='s'||e.key==='S'){ tryMove(0,1); e.preventDefault(); }
+    else if (e.key==='ArrowLeft'||e.key==='a'||e.key==='A'){ tryMove(-1,0); e.preventDefault(); }
+    else if (e.key==='ArrowRight'||e.key==='d'||e.key==='D'){ tryMove(1,0); e.preventDefault(); }
+  }
+});
+
+// =============================================================
+// BATTLE SYSTEM
+// =============================================================
+let battle = null;
+
+function startBattle(mapMon){
+  // Random level around base
+  const mon = mapMon.monster;
+  const lvBoost = Math.floor(Math.random()*3);
+  battle = {
+    mapMon: mapMon,
+    enemy: {
+      name: mon.name,
+      emoji: mon.emoji,
+      lv: mon.lv + lvBoost,
+      maxHp: mon.hp + lvBoost*8,
+      hp: mon.hp + lvBoost*8,
+      atk: mon.atk + lvBoost*2,
+      def: mon.def + lvBoost,
+      spd: mon.spd,
+      exp: mon.exp + lvBoost*4,
+      gold: mon.gold + lvBoost*3,
+      drop: mon.drop,
+    },
+    turn: 'player',
+    finished: false,
+  };
+  game.inBattle = true;
+  $('battle-log').innerHTML = '';
+  show('battle-screen');
+  drawBattle();
+  blog(`⚔ ${battle.enemy.name} (Lv ${battle.enemy.lv}) ปรากฏตัว!`);
+}
+
+function drawBattle(){
+  const r = RACES.find(x=>x.id===game.raceId);
+  const c = CLASSES.find(x=>x.id===game.classId);
+  $('player-sprite').textContent = r.emoji + c.emoji;
+  $('bf-pname').textContent = game.name;
+  $('bf-plvl').textContent = `Lv ${game.lv} · ${c.name}`;
+  $('bf-php').style.width = (game.hp/game.maxHp*100)+'%';
+  $('bf-phpl').textContent = `${game.hp}/${game.maxHp}`;
+  $('bf-pmp').style.width = (game.mp/game.maxMp*100)+'%';
+  $('bf-pmpl').textContent = `${game.mp}/${game.maxMp}`;
+
+  $('enemy-sprite').textContent = battle.enemy.emoji;
+  $('bf-ename').textContent = battle.enemy.name;
+  $('bf-elvl').textContent = `Lv ${battle.enemy.lv}`;
+  $('bf-ehp').style.width = (battle.enemy.hp/battle.enemy.maxHp*100)+'%';
+  $('bf-ehpl').textContent = `${battle.enemy.hp}/${battle.enemy.maxHp}`;
+
+  const ctrlDisabled = battle.turn!=='player' || battle.finished;
+  $('bbtn-atk').disabled = ctrlDisabled;
+  $('bbtn-skill').disabled = ctrlDisabled;
+  $('bbtn-item').disabled = ctrlDisabled;
+  $('bbtn-run').disabled = ctrlDisabled;
+}
+
+function blog(msg){
+  const div = document.createElement('div');
+  div.textContent = msg;
+  $('battle-log').appendChild(div);
+  $('battle-log').scrollTop = $('battle-log').scrollHeight;
+}
+
+function floatNum(target, txt, color){
+  const el = $(target);
+  const rect = el.getBoundingClientRect();
+  const gameRect = $('game').getBoundingClientRect();
+  const num = document.createElement('div');
+  num.className = 'floating-num';
+  num.textContent = txt;
+  num.style.color = color;
+  num.style.left = (rect.left - gameRect.left + rect.width/2) + 'px';
+  num.style.top = (rect.top - gameRect.top + 30) + 'px';
+  $('battle-screen').appendChild(num);
+  setTimeout(()=>num.remove(), 1000);
+}
+
+function damageCalc(att, def, mult=1.0){
+  const base = Math.max(1, att - def/2);
+  const varied = base * (0.85 + Math.random()*0.3) * mult;
+  const crit = Math.random() < 0.1;
+  return { dmg: Math.max(1, Math.floor(varied * (crit?1.7:1))), crit };
+}
+
+function bAttack(){
+  if (battle.turn!=='player'||battle.finished) return;
+  const { dmg, crit } = damageCalc(game.atk, battle.enemy.def);
+  battle.enemy.hp = Math.max(0, battle.enemy.hp - dmg);
+  $('enemy-fighter').classList.add('hit');
+  setTimeout(()=>$('enemy-fighter').classList.remove('hit'), 400);
+  floatNum('enemy-sprite', crit?`💥${dmg}`:dmg, crit?'#ff5555':'#ffffff');
+  blog(`⚔ ${game.name} โจมตี ${battle.enemy.name} ${crit?'(คริ!)':''} → ${dmg} ดาเมจ`);
+  drawBattle();
+  if (battle.enemy.hp<=0) return endBattle(true);
+  enemyTurn();
+}
+
+function bSkill(){
+  if (battle.turn!=='player'||battle.finished) return;
+  const c = CLASSES.find(x=>x.id===game.classId);
+  if (game.mp < c.skill.mp) { blog(`MP ไม่พอ! ต้องการ ${c.skill.mp}`); return; }
+  game.mp -= c.skill.mp;
+  if (c.skill.type === 'heal') {
+    const heal = Math.floor(game.maxHp * 0.4 + game.atk * 1.5);
+    game.hp = Math.min(game.maxHp, game.hp + heal);
+    $('player-fighter').classList.add('flash');
+    setTimeout(()=>$('player-fighter').classList.remove('flash'), 300);
+    floatNum('player-sprite', `+${heal}`, '#2dc653');
+    blog(`✨ ${c.skill.name}! ฟื้น HP ${heal}`);
+  } else {
+    const { dmg, crit } = damageCalc(game.atk, battle.enemy.def, c.skill.mult);
+    battle.enemy.hp = Math.max(0, battle.enemy.hp - dmg);
+    $('enemy-fighter').classList.add('hit');
+    $('enemy-fighter').classList.add('flash');
+    setTimeout(()=>{ $('enemy-fighter').classList.remove('hit'); $('enemy-fighter').classList.remove('flash'); }, 400);
+    floatNum('enemy-sprite', `✨${dmg}`, c.skill.type==='magic'?'#9b5bd6':c.skill.type==='holy'?'#ffd97d':'#ff5555');
+    blog(`✨ ${c.skill.name}! → ${dmg} ดาเมจ ${crit?'(คริ!)':''}`);
+  }
+  drawBattle();
+  if (battle.enemy.hp<=0) return endBattle(true);
+  enemyTurn();
+}
+
+function bItem(){
+  // Show item picker
+  let consumables = Object.keys(game.inventory).filter(k=> ITEMS[k] && ITEMS[k].type==='consume' && game.inventory[k]>0);
+  if (consumables.length===0) { blog('ไม่มีไอเทมที่ใช้ได้!'); return; }
+  // Use first potion (simple version)
+  const itemKey = consumables[0];
+  const it = ITEMS[itemKey];
+  if (it.heal){
+    game.hp = Math.min(game.maxHp, game.hp + it.heal);
+    floatNum('player-sprite', `+${it.heal}`, '#2dc653');
+    blog(`🧪 ใช้ ${it.name} → ฟื้น HP ${it.heal}`);
+  } else if (it.healMp){
+    game.mp = Math.min(game.maxMp, game.mp + it.healMp);
+    floatNum('player-sprite', `+${it.healMp}`, '#4f8ed6');
+    blog(`🧪 ใช้ ${it.name} → ฟื้น MP ${it.healMp}`);
+  }
+  game.inventory[itemKey] -= 1;
+  if (game.inventory[itemKey]<=0) delete game.inventory[itemKey];
+  drawBattle();
+  enemyTurn();
+}
+
+function bRun(){
+  if (battle.finished) return;
+  const chance = 0.5 + (game.spd - battle.enemy.spd) * 0.05;
+  if (Math.random() < chance) {
+    blog('🏃 หนีสำเร็จ!');
+    battle.finished = true;
+    setTimeout(()=>{
+      game.inBattle = false;
+      show('game-screen');
+      drawMap();
+    }, 800);
+  } else {
+    blog('💨 หนีไม่ทัน!');
+    enemyTurn();
+  }
+}
+
+function enemyTurn(){
+  if (battle.finished) return;
+  battle.turn = 'enemy';
+  drawBattle();
+  setTimeout(()=>{
+    const { dmg, crit } = damageCalc(battle.enemy.atk, game.def);
+    game.hp = Math.max(0, game.hp - dmg);
+    $('player-fighter').classList.add('hit');
+    setTimeout(()=>$('player-fighter').classList.remove('hit'), 400);
+    floatNum('player-sprite', crit?`💥${dmg}`:dmg, crit?'#ff5555':'#ffffff');
+    blog(`👹 ${battle.enemy.name} โจมตี → ${dmg} ดาเมจ${crit?' (คริ!)':''}`);
+    drawBattle();
+    if (game.hp<=0) return endBattle(false);
+    battle.turn = 'player';
+    drawBattle();
+  }, 700);
+}
+
+function endBattle(victory){
+  battle.finished = true;
+  setTimeout(()=>{
+    if (victory){
+      const expGain = battle.enemy.exp;
+      const goldGain = battle.enemy.gold + Math.floor(Math.random()*5);
+      game.gold += goldGain;
+      blog(`🎉 ชนะ! ได้ EXP ${expGain}, ทอง ${goldGain}`);
+      log(`ปราบ ${battle.enemy.name} → EXP ${expGain}, ทอง ${goldGain}`, 'good');
+      // Drop?
+      if (battle.enemy.drop && Math.random() < battle.enemy.drop.chance){
+        const dropKey = battle.enemy.drop.item;
+        game.inventory[dropKey] = (game.inventory[dropKey]||0) + 1;
+        log(`🎁 ได้ ${ITEMS[dropKey].emoji} ${ITEMS[dropKey].name}!`, 'gold');
+        blog(`🎁 ได้ ${ITEMS[dropKey].name}!`);
+      }
+      // Rare plus stone drop
+      if (Math.random() < 0.1){
+        game.inventory['plus-stone'] = (game.inventory['plus-stone']||0) + 1;
+        log(`💠 ได้ หินตีบวก!`, 'gold');
+      }
+      gainExp(expGain);
+      // Remove monster from map
+      const idx = mapMonsters.indexOf(battle.mapMon);
+      if (idx>=0) mapMonsters.splice(idx, 1);
+      // Respawn occasionally
+      if (mapMonsters.length < 3) {
+        setTimeout(()=>{ spawnMonsters(); if (!game.inBattle) drawMap(); }, 4000);
+      }
+      setTimeout(()=>{
+        game.inBattle = false;
+        show('game-screen');
+        drawMap();
+        updateUI();
+      }, 1500);
+    } else {
+      blog('💀 พ่ายแพ้!');
+      log('💀 พ่ายแพ้... กลับสู่เมือง', 'bad');
+      // Lose half gold, full heal at town
+      game.gold = Math.floor(game.gold/2);
+      game.hp = game.maxHp;
+      game.mp = game.maxMp;
+      game.map = 'sakura';
+      game.px = 5; game.py = 5;
+      spawnMonsters();
+      setTimeout(()=>{
+        game.inBattle = false;
+        show('game-screen');
+        drawMap();
+        updateUI();
+      }, 1800);
+    }
+  }, 800);
+}
+
+// =============================================================
+// MODAL
+// =============================================================
+function openModalCustom(title, html, footer){
+  $('modal-title').textContent = title;
+  $('modal-body').innerHTML = html;
+  $('modal-footer').innerHTML = footer || '<button class="btn" onclick="closeModal()">ปิด</button>';
+  $('modal').classList.add('active');
+}
+function closeModal(){ $('modal').classList.remove('active'); }
+
+// ========== INVENTORY ==========
+function openInventory(){
+  const items = Object.keys(game.inventory).filter(k=>game.inventory[k]>0);
+  let html = '';
+  if (items.length===0) html = '<p style="color:var(--text-dim); text-align:center;">กระเป๋าว่างเปล่า</p>';
+  else {
+    html = '<div class="inventory-grid">';
+    for (const key of items){
+      const it = ITEMS[key];
+      if (!it) continue;
+      const qty = game.inventory[key];
+      const equipped = (key===game.equipWeapon || key===game.equipArmor);
+      const slot = it.type==='weapon' ? '_w' : it.type==='armor' ? '_a' : '';
+      const plus = slot ? (game.plus[key+slot]||0) : 0;
+      const plusStr = plus>0 ? `<span class="item-plus">+${plus}</span>` : '';
+      let actionTxt = '';
+      if (it.type==='consume') actionTxt = `<button class="btn small" onclick="useItem('${key}')">ใช้</button>`;
+      else if (it.type==='weapon' || it.type==='armor') {
+        if (equipped) actionTxt = `<button class="btn small" onclick="unequipItem('${key}')">ถอด</button>`;
+        else actionTxt = `<button class="btn small" onclick="equipItem('${key}')">สวม</button>`;
+      }
+      const statTxt = it.atk?`ATK+${it.atk}`:it.def?`DEF+${it.def}`:it.heal?`ฟื้น ${it.heal} HP`:it.desc;
+      html += `
+        <div class="item-card ${equipped?'equipped':''}">
+          <span class="item-emoji">${it.emoji}</span>
+          <div class="item-info">
+            <div class="item-name">${it.name} ${plusStr}</div>
+            <div class="item-stat">${statTxt} · x${qty}</div>
+          </div>
+          ${actionTxt}
+        </div>
+      `;
+    }
+    html += '</div>';
+  }
+  openModalCustom('🎒 กระเป๋า', html);
+}
+
+function useItem(key){
+  const it = ITEMS[key];
+  if (it.type !== 'consume') return;
+  if (it.heal){
+    game.hp = Math.min(game.maxHp, game.hp + it.heal);
+    log(`ใช้ ${it.name} → ฟื้น HP ${it.heal}`, 'good');
+  } else if (it.healMp){
+    game.mp = Math.min(game.maxMp, game.mp + it.healMp);
+    log(`ใช้ ${it.name} → ฟื้น MP ${it.healMp}`, 'good');
+  }
+  game.inventory[key] -= 1;
+  if (game.inventory[key]<=0) delete game.inventory[key];
+  updateUI();
+  openInventory();
+}
+
+function equipItem(key){
+  const it = ITEMS[key];
+  if (it.type==='weapon') game.equipWeapon = key;
+  else if (it.type==='armor') game.equipArmor = key;
+  recalcStats();
+  updateUI();
+  openInventory();
+  log(`สวม ${it.name}`, 'good');
+}
+
+function unequipItem(key){
+  if (game.equipWeapon===key) game.equipWeapon = null;
+  if (game.equipArmor===key) game.equipArmor = null;
+  recalcStats();
+  updateUI();
+  openInventory();
+}
+
+// ========== CRAFT ==========
+function openCraft(){
+  let html = '<p style="color:var(--text-dim); font-size:11px; margin-bottom:10px;">ใช้วัตถุดิบและทอง สร้างอาวุธ/เกราะ</p>';
+  for (const rec of RECIPES){
+    const result = ITEMS[rec.result];
+    if (rec.classReq && !rec.classReq.includes(game.classId)) continue;
+    const haveMats = Object.keys(rec.mats).every(k => (game.inventory[k]||0) >= rec.mats[k]);
+    const haveGold = game.gold >= rec.gold;
+    const can = haveMats && haveGold;
+    const matsTxt = Object.keys(rec.mats).map(k=>{
+      const need = rec.mats[k];
+      const have = game.inventory[k]||0;
+      const ok = have>=need;
+      return `<span class="${ok?'can-craft':'cant-craft'}">${ITEMS[k].emoji}${ITEMS[k].name} ${have}/${need}</span>`;
+    }).join(' · ');
+    const statTxt = result.atk?`ATK+${result.atk}`:result.def?`DEF+${result.def}`:result.desc;
+    html += `
+      <div class="craft-recipe">
+        <span style="font-size:32px;">${result.emoji}</span>
+        <div class="recipe-info">
+          <div class="recipe-name">${result.name} (${statTxt})</div>
+          <div class="recipe-mat">${matsTxt}</div>
+          <div class="recipe-mat ${haveGold?'can-craft':'cant-craft'}">💰 ${rec.gold} ทอง</div>
+        </div>
+        <button class="btn small" ${can?'':'disabled'} onclick="doCraft('${rec.result}')">คราฟ</button>
+      </div>
+    `;
+  }
+  openModalCustom('⚒ คราฟอาวุธ/เกราะ', html);
+}
+
+function doCraft(resultKey){
+  const rec = RECIPES.find(r=>r.result===resultKey);
+  if (!rec) return;
+  // Check
+  for (const k of Object.keys(rec.mats)) {
+    if ((game.inventory[k]||0) < rec.mats[k]) { alert('วัตถุดิบไม่พอ'); return; }
+  }
+  if (game.gold < rec.gold) { alert('ทองไม่พอ'); return; }
+  // Pay
+  for (const k of Object.keys(rec.mats)) {
+    game.inventory[k] -= rec.mats[k];
+    if (game.inventory[k]<=0) delete game.inventory[k];
+  }
+  game.gold -= rec.gold;
+  // Give
+  game.inventory[resultKey] = (game.inventory[resultKey]||0) + 1;
+  log(`⚒ คราฟ ${ITEMS[resultKey].name} สำเร็จ!`, 'gold');
+  updateUI();
+  openCraft();
+}
+
+// ========== ENHANCE (ตีบวก) ==========
+function openEnhance(){
+  const eq = [];
+  if (game.equipWeapon) eq.push({ key: game.equipWeapon, slot: '_w', type: 'weapon' });
+  if (game.equipArmor)  eq.push({ key: game.equipArmor,  slot: '_a', type: 'armor'  });
+  let html = '<p style="color:var(--text-dim); font-size:11px; margin-bottom:10px;">ตีบวกอาวุธ/เกราะที่สวมใส่อยู่ ใช้ 💠 หินตีบวก</p>';
+  html += `<p style="margin-bottom:10px;">💠 หินตีบวก: <span class="gold-text">${game.inventory['plus-stone']||0}</span> ชิ้น</p>`;
+  if (eq.length===0) {
+    html += '<p style="color:var(--text-dim); text-align:center;">ต้องสวมอาวุธหรือเกราะก่อน</p>';
+  } else {
+    for (const e of eq){
+      const it = ITEMS[e.key];
+      const plus = game.plus[e.key+e.slot] || 0;
+      const success = Math.max(5, 95 - plus * 9); // ลดลงตามระดับ
+      const cost = 1 + Math.floor(plus/2); // หินที่ต้องใช้
+      const maxed = plus >= 10;
+      const stones = game.inventory['plus-stone'] || 0;
+      const can = !maxed && stones >= cost;
+      html += `
+        <div class="craft-recipe">
+          <span style="font-size:32px;">${it.emoji}</span>
+          <div class="recipe-info">
+            <div class="recipe-name">${it.name} <span class="item-plus">+${plus}</span> ${maxed?'(สูงสุดแล้ว)':''}</div>
+            <div class="recipe-mat">โอกาสสำเร็จ: <b>${success}%</b> · ใช้ 💠 ${cost} ชิ้น</div>
+            <div class="recipe-mat">เพิ่ม ${e.type==='weapon'?'ATK +3':'DEF +2'} ต่อบวก</div>
+          </div>
+          <button class="btn small" ${can?'':'disabled'} onclick="doEnhance('${e.key}','${e.slot}',${success},${cost})">ตี!</button>
+        </div>
+      `;
+    }
+  }
+  openModalCustom('✨ ตีบวก', html);
+}
+
+function doEnhance(key, slot, success, cost){
+  if ((game.inventory['plus-stone']||0) < cost) { alert('หินตีบวกไม่พอ'); return; }
+  game.inventory['plus-stone'] -= cost;
+  if (game.inventory['plus-stone']<=0) delete game.inventory['plus-stone'];
+  const roll = Math.random()*100;
+  if (roll < success) {
+    game.plus[key+slot] = (game.plus[key+slot]||0) + 1;
+    log(`✨ ตีบวก ${ITEMS[key].name} สำเร็จ! → +${game.plus[key+slot]}`, 'gold');
+  } else {
+    // fail - drop level by 1 if > 5
+    const cur = game.plus[key+slot] || 0;
+    if (cur >= 5){
+      game.plus[key+slot] = cur - 1;
+      log(`💥 ตีบวกล้มเหลว! ลดเหลือ +${game.plus[key+slot]}`, 'bad');
+    } else {
+      log(`💥 ตีบวกล้มเหลว!`, 'bad');
+    }
+  }
+  recalcStats();
+  updateUI();
+  openEnhance();
+}
+
+// ========== CLASS CHANGE ==========
+function openClassChange(){
+  const cost = 500;
+  let html = `<p style="margin-bottom:10px;">เปลี่ยนอาชีพ (ใช้ 💰 ${cost} ทอง)</p>`;
+  html += '<div class="class-grid">';
+  for (const c of CLASSES){
+    const cur = c.id === game.classId;
+    html += `
+      <div class="option-card ${cur?'selected':''}">
+        <span class="emoji">${c.emoji}</span>
+        <div class="info">
+          <div class="name">${c.name}</div>
+          <div class="desc">สกิล: ${c.skill.name}</div>
+        </div>
+        ${cur?'<span style="color:var(--hp-color);font-size:11px;">ปัจจุบัน</span>':`<button class="btn small" onclick="changeClass('${c.id}',${cost})">เลือก</button>`}
+      </div>
+    `;
+  }
+  html += '</div>';
+  openModalCustom('🔄 เปลี่ยนอาชีพ', html);
+}
+
+function changeClass(classId, cost){
+  if (game.gold < cost) { alert('ทองไม่พอ'); return; }
+  game.gold -= cost;
+  game.classId = classId;
+  recalcStats();
+  log(`🔄 เปลี่ยนอาชีพเป็น ${CLASSES.find(c=>c.id===classId).name}`, 'gold');
+  updateUI();
+  drawMap();
+  closeModal();
+}
+
+// ========== HEAL ==========
+function openHeal(){
+  const fullCost = Math.max(20, (game.maxHp - game.hp) + (game.maxMp - game.mp));
+  let html = `
+    <p style="margin-bottom:10px;">บริการของหมอประจำหมู่บ้าน</p>
+    <div class="shop-item">
+      <span style="font-size:28px;">💊</span>
+      <div class="shop-info">
+        <div class="shop-name">ฟื้นฟู HP/MP เต็ม</div>
+        <div class="shop-desc">💰 ${fullCost} ทอง</div>
+      </div>
+      <button class="btn small" ${game.gold>=fullCost?'':'disabled'} onclick="doHeal(${fullCost})">รักษา</button>
+    </div>
+    <div class="shop-item">
+      <span style="font-size:28px;">🧪</span>
+      <div class="shop-info">
+        <div class="shop-name">ซื้อยาฟื้น HP เล็ก (50)</div>
+        <div class="shop-desc">💰 30 ทอง</div>
+      </div>
+      <button class="btn small" ${game.gold>=30?'':'disabled'} onclick="buyItem('potion-s',30)">ซื้อ</button>
+    </div>
+    <div class="shop-item">
+      <span style="font-size:28px;">🍶</span>
+      <div class="shop-info">
+        <div class="shop-name">ซื้อยาฟื้น HP กลาง (150)</div>
+        <div class="shop-desc">💰 100 ทอง</div>
+      </div>
+      <button class="btn small" ${game.gold>=100?'':'disabled'} onclick="buyItem('potion-m',100)">ซื้อ</button>
+    </div>
+    <div class="shop-item">
+      <span style="font-size:28px;">🏺</span>
+      <div class="shop-info">
+        <div class="shop-name">ซื้อยาฟื้น HP ใหญ่ (400)</div>
+        <div class="shop-desc">💰 300 ทอง</div>
+      </div>
+      <button class="btn small" ${game.gold>=300?'':'disabled'} onclick="buyItem('potion-l',300)">ซื้อ</button>
+    </div>
+    <div class="shop-item">
+      <span style="font-size:28px;">💧</span>
+      <div class="shop-info">
+        <div class="shop-name">ซื้อน้ำมนตร์ (MP 30)</div>
+        <div class="shop-desc">💰 50 ทอง</div>
+      </div>
+      <button class="btn small" ${game.gold>=50?'':'disabled'} onclick="buyItem('ether-s',50)">ซื้อ</button>
+    </div>
+    <div class="shop-item">
+      <span style="font-size:28px;">💠</span>
+      <div class="shop-info">
+        <div class="shop-name">ซื้อหินตีบวก</div>
+        <div class="shop-desc">💰 250 ทอง</div>
+      </div>
+      <button class="btn small" ${game.gold>=250?'':'disabled'} onclick="buyItem('plus-stone',250)">ซื้อ</button>
+    </div>
+  `;
+  openModalCustom('💊 ฟื้น HP / ร้านขายของ', html);
+}
+
+function doHeal(cost){
+  if (game.gold < cost) { alert('ทองไม่พอ'); return; }
+  game.gold -= cost;
+  game.hp = game.maxHp;
+  game.mp = game.maxMp;
+  log('💊 ฟื้นฟูเต็มหลอด!', 'good');
+  updateUI();
+  closeModal();
+}
+
+function buyItem(key, cost){
+  if (game.gold < cost) return;
+  game.gold -= cost;
+  game.inventory[key] = (game.inventory[key]||0) + 1;
+  log(`💰 ซื้อ ${ITEMS[key].name}`, 'good');
+  updateUI();
+  openHeal();
+}
+
+// ========== MAP CHANGE ==========
+function openMapMenu(){
+  let html = '<p style="margin-bottom:10px;">เลือกแมพที่จะไป (แมพยากให้ EXP มาก แต่เสี่ยงสูง)</p>';
+  for (const key of Object.keys(MAPS)){
+    const m = MAPS[key];
+    const cur = key===game.map;
+    const tooHigh = game.lv < m.minLv;
+    html += `
+      <div class="shop-item ${cur?'equipped':''}">
+        <span style="font-size:32px;">${m.tiles[0]}</span>
+        <div class="shop-info">
+          <div class="shop-name">${m.name}</div>
+          <div class="shop-desc">แนะนำ Lv ${m.minLv}-${m.maxLv}</div>
+        </div>
+        ${cur?'<span style="color:var(--hp-color);font-size:11px;">ปัจจุบัน</span>':`<button class="btn small" ${tooHigh?'disabled':''} onclick="changeMap('${key}')">${tooHigh?`ต้อง Lv ${m.minLv}`:'ไป'}</button>`}
+      </div>
+    `;
+  }
+  openModalCustom('🗺 เปลี่ยนแมพ', html);
+}
+
+function changeMap(mapKey){
+  game.map = mapKey;
+  game.px = 5; game.py = 5;
+  spawnMonsters();
+  drawMap();
+  updateUI();
+  log(`🗺 มาถึง ${MAPS[mapKey].name}`, 'gold');
+  closeModal();
+}
+
+// ========== SAVE / LOAD ==========
+function saveGame(){
+  try {
+    localStorage.setItem('demoOnline_save', JSON.stringify(game));
+    log('💾 เซฟเกมสำเร็จ', 'good');
+  } catch(e){
+    alert('เซฟไม่ได้ (localStorage เต็ม?)');
+  }
+}
+
+// =============================================================
+// INIT
+// =============================================================
+window.addEventListener('load', ()=>{
+  $('load-btn').disabled = !localStorage.getItem('demoOnline_save');
+  // Pre-spawn for new game
+});
+
+// Auto-spawn when entering map screen
+const originalShow = show;
+window.show = function(id){
+  originalShow(id);
+  if (id === 'game-screen' && mapMonsters.length === 0) {
+    spawnMonsters();
+    drawMap();
+  }
+};
+
+// Spawn on character creation done
+const origConfirm = confirmCharacter;
+confirmCharacter = function(){
+  origConfirm();
+  spawnMonsters();
+  drawMap();
+};
+
+</script>
+</body>
+</html>

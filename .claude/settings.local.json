@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ls -la \"C:/Users/Windows/.claude/projects/c--Users-Windows-Documents-Claude-Projects-demo-clone/memory/\" 2>/dev/null; echo \"---\"; cat \"C:/Users/Windows/.claude/projects/c--Users-Windows-Documents-Claude-Projects-demo-clone/memory/MEMORY.md\" 2>/dev/null)",
+      "Read(//c/Users/Windows/.claude/projects/c--Users-Windows-Documents-Claude-Projects-demo-clone/memory/**)",
+      "PowerShell(\\(Get-Command git\\).Source; Test-Path \"C:\\\\Program Files\\\\Git\\\\bin\\\\bash.exe\")",
+      "Bash(ls -la \"c:/Users/Windows/Documents/Claude/Projects/demo_clone/.agents/skills/\" 2>nul; echo \"---\"; ls -la \"c:/Users/Windows/Documents/Claude/Projects/demo_clone/.claude/\" 2>nul; echo \"--- home ---\"; ls -la \"C:/Users/Windows/.claude/skills/\" 2>nul)",
+      "Read(//c/Users/Windows/.claude/**)",
+      "Bash(mkdir -p .claude/skills)",
+      "Bash(cp -r .agents/skills/* .claude/skills/)",
+      "Bash(npm install *)",
+      "Bash(Get-ChildItem -Path \"c:\\\\Users\\\\Windows\\\\Documents\\\\Claude\\\\Projects\\\\demo_clone\" -Recurse -Directory)",
+      "Bash(Select-Object FullName)",
+      "Bash(npx vitest *)",
+      "Bash(npx tsc *)",
+      "Bash(echo \"--- TSC EXIT $? ---\")",
+      "Bash(npm run *)"
+    ]
+  }
+}
