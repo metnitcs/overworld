@@ -1,31 +1,16 @@
 {
   "name": "asura-online",
   "private": true,
-  "version": "0.1.0",
-  "type": "module",
+  "version": "0.2.0",
+  "description": "อสูรเว็บ Online — monorepo (client + server) for Phase 2 backend",
+  "workspaces": [
+    "client",
+    "server"
+  ],
   "scripts": {
-    "dev": "vite",
-    "build": "tsc -b && vite build",
-    "preview": "vite preview",
-    "test": "vitest run",
-    "test:watch": "vitest"
-  },
-  "dependencies": {
-    "phaser": "^3.80.1",
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1",
-    "zustand": "^4.5.2"
-  },
-  "devDependencies": {
-    "@types/node": "^22.19.19",
-    "@types/react": "^18.3.3",
-    "@types/react-dom": "^18.3.0",
-    "@vitejs/plugin-react": "^4.3.1",
-    "autoprefixer": "^10.4.19",
-    "postcss": "^8.4.39",
-    "tailwindcss": "^3.4.4",
-    "typescript": "^5.5.3",
-    "vite": "^5.3.3",
-    "vitest": "^2.1.9"
+    "dev:client": "npm -w @asura/client run dev",
+    "dev:server": "npm -w @asura/server run dev",
+    "build": "npm -w @asura/client run build && npm -w @asura/server run build",
+    "test": "npm -w @asura/client run test && npm -w @asura/server run test"
   }
 }

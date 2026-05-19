@@ -14,7 +14,14 @@
       "Bash(npx vitest *)",
       "Bash(npx tsc *)",
       "Bash(echo \"--- TSC EXIT $? ---\")",
-      "Bash(npm run *)"
+      "Bash(npm run *)",
+      "PowerShell(Get-CimInstance Win32_Process -Filter \"Name='node.exe'\" | Select-Object ProcessId,@{n='MB';e={[int]\\($_.WorkingSetSize/1MB\\)}},CommandLine | Format-List)",
+      "Bash(git mv *)",
+      "Bash(npm -w @asura/client run test)",
+      "Bash(npm -w @asura/client run build)",
+      "Bash(npm -w @asura/server run build)",
+      "Bash(node -e \"import\\('./server/dist/app.js'\\).then\\(async m=>{const a=m.buildServer\\(\\);const r=await a.inject\\({method:'GET',url:'/health'}\\);console.log\\(r.statusCode, r.body\\);await a.close\\(\\);}\\)\")",
+      "Bash(git add *)"
     ]
   }
 }
