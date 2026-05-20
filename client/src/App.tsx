@@ -46,10 +46,20 @@ export default function App() {
     }
   }, [])
 
+  // Portal is a full-page scrolling web layout; every other screen lives in
+  // the fixed 1280×860 game frame. See docs/adr/0001-dual-design-system-pre-game-vs-in-game.md
+  if (screen === 'title') {
+    return (
+      <>
+        <TitleScreen />
+        {modal !== 'none' && <Modal type={modal} onClose={() => setModal('none')} />}
+      </>
+    )
+  }
+
   return (
     <div className="w-screen h-screen overflow-hidden flex items-center justify-center">
       <div className="w-full h-full max-w-[1280px] max-h-[860px] relative">
-        {screen === 'title' && <TitleScreen />}
         {screen === 'create' && <CreateScreen />}
         {screen === 'game' && <GameScreen />}
         {screen === 'battle' && <BattleScreen />}

@@ -1,9 +1,26 @@
+import 'dotenv/config'
+import { PrismaClient } from '@prisma/client'
 import { buildServer } from './app.js'
 
 const port = Number(process.env.PORT ?? 3000)
 const host = process.env.HOST ?? '0.0.0.0'
+const jwtSecret = process.env.JWT_SECRET
+if (!jwtSecret) {
+  console.error('JWT_SECRET environment variable is required (see server/.env.example)')
+  process.exit(1)
+}
 
-const app = buildServer()
+const prisma = new PrismaClient()
+const app = buildServer({ prisma, jwtSecret })
+
+const shutdown = async (signal: NodeJS.Signals) => {
+  app.log.info({ signal }, 'shutting down')
+  await app.close()
+  await prisma.$disconnect()
+  process.exit(0)
+}
+process.on('SIGINT', shutdown)
+process.on('SIGTERM', shutdown)
 
 app
   .listen({ port, host })
