@@ -1,4 +1,4 @@
-import type { Rng } from './combat'
+import type { Rng } from './combat.js'
 
 export type EnhanceOutcome = 'no-stone' | 'ok' | 'fail'
 

@@ -4,8 +4,9 @@ export default defineConfig({
   test: {
     setupFiles: ['./vitest.setup.ts'],
     passWithNoTests: true,
-    // Endpoint tests share a Prisma client + open server instance, so run them
-    // sequentially within a file to avoid cleanup races.
+    // Integration tests share the dev Postgres DB; running test files in
+    // parallel workers races on `test_*` user cleanup. Force sequential.
+    fileParallelism: false,
     sequence: { concurrent: false },
   },
 })

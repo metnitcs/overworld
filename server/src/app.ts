@@ -1,11 +1,14 @@
-import Fastify, { type FastifyInstance } from 'fastify'
+import Fastify, { type FastifyInstance, type preHandlerHookHandler } from 'fastify'
 import type { PrismaClient } from '@prisma/client'
 import { registerAuthRoutes } from './routes/auth.js'
+import { registerCharacterRoutes } from './routes/character.js'
+import { makeRequireAuth } from './plugins/requireAuth.js'
 
 declare module 'fastify' {
   interface FastifyInstance {
     prisma: PrismaClient
     jwtSecret: string
+    requireAuth: preHandlerHookHandler
   }
 }
 
@@ -22,10 +25,12 @@ export function buildServer(opts: BuildServerOptions): FastifyInstance {
 
   app.decorate('prisma', opts.prisma)
   app.decorate('jwtSecret', opts.jwtSecret)
+  app.decorate('requireAuth', makeRequireAuth(opts.jwtSecret))
 
   app.get('/health', async () => ({ ok: true, service: 'asura-server' }))
 
   registerAuthRoutes(app)
+  registerCharacterRoutes(app)
 
   return app
 }

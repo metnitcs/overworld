@@ -1,5 +1,5 @@
-import type { GameState } from '../types'
-import { RACES, CLASSES, ITEMS } from '../data'
+import type { GameState } from '../types.js'
+import { RACES, CLASSES, ITEMS } from '../data.js'
 
 /** Derive HP/MP/ATK/DEF/SPD from race + class + level + equipment + enhance
  *  level. Pure: depends only on the input state and game data constants.

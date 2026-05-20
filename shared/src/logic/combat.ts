@@ -1,4 +1,4 @@
-import type { MonsterDef, BattleEnemy } from '../types'
+import type { MonsterDef, BattleEnemy } from '../types.js'
 
 /** Source of randomness, injected so logic stays pure and testable.
  *  Returns a float in [0, 1) — same contract as Math.random. */

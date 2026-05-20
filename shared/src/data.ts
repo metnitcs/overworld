@@ -1,4 +1,4 @@
-import type { Race, CharClass, MapDef, ItemDef, Recipe } from './types'
+import type { Race, CharClass, MapDef, ItemDef, Recipe } from './types.js'
 
 export const RACES: Race[] = [
   { id: 'mara',  name: 'เผ่ามาร',     emoji: '😈', hp: 110, mp: 80,  atk: 12, def: 8,  spd: 10, desc: 'พลังโจมตีและ HP สูง' },

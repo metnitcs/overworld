@@ -1,4 +1,4 @@
-import { expForLv } from '../data'
+import { expForLv } from '../data.js'
 
 export interface ExpResult {
   lv: number
