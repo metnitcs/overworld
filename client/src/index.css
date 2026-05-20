@@ -1164,3 +1164,567 @@ body {
 .mochi-create-shell .create-footer input.name:focus {
   border-color: var(--accent); background: #fff;
 }
+
+/* ============================================================ */
+/* ASURA — dark MMORPG override layered on top of .mochi.       */
+/* Apply by wrapping with: <div className="mochi asura ...">    */
+/* Tokens flip to a warm dark palette; selectors below replace  */
+/* the soft-pink ornaments with embers, runes, and metal lines. */
+/* ============================================================ */
+.asura {
+  /* Tokens — warm-dark, crimson + ember */
+  --bg:        #0b0d18;
+  --bg-soft:   #12152a;
+  --bg-tint:   #1a1530;
+  --card:      #161a30;
+  --ink:       #ece7d8;   /* warm off-white, easy on eyes */
+  --ink-2:     #d6cfbe;
+  --muted:     #8c8aa8;
+  --muted-2:   #5d5f80;
+  --line:      #262b48;
+  --line-2:    #353b62;
+  --accent:    #ef4444;   /* crimson */
+  --accent-2:  #b91c1c;
+  --accent-soft: #2a1018;
+  --accent-50:   #1c0c12;
+  --warn:      #f59e0b;
+  --good:      #34d399;
+  --info:      #60a5fa;
+  --violet:    #a78bfa;
+  --shadow-sm: 0 1px 2px rgba(0,0,0,0.4);
+  --shadow-card: 0 1px 0 rgba(255,255,255,0.04) inset, 0 4px 16px rgba(0,0,0,0.35);
+  --shadow-md: 0 8px 28px rgba(0,0,0,0.5);
+  --shadow-lg: 0 20px 50px rgba(0,0,0,0.6);
+
+  font-family: 'Cinzel', 'Inter', 'Sarabun', system-ui, sans-serif;
+  color: var(--ink);
+  background:
+    radial-gradient(ellipse 1200px 600px at 80% -10%, rgba(239,68,68,0.10), transparent 60%),
+    radial-gradient(ellipse 900px 500px at -10% 30%, rgba(167,139,250,0.07), transparent 60%),
+    radial-gradient(ellipse 800px 600px at 50% 110%, rgba(245,158,11,0.06), transparent 70%),
+    var(--bg);
+}
+.asura.mochi-page { background-attachment: fixed; }
+
+/* ───── Subtle ember particles in background ───── */
+.asura.mochi-page::before {
+  content: '';
+  position: fixed; inset: 0;
+  pointer-events: none;
+  background-image:
+    radial-gradient(1px 1px at 12% 20%, rgba(239,68,68,0.5), transparent),
+    radial-gradient(1px 1px at 78% 65%, rgba(245,158,11,0.4), transparent),
+    radial-gradient(1px 1px at 35% 85%, rgba(167,139,250,0.5), transparent),
+    radial-gradient(2px 2px at 88% 15%, rgba(239,68,68,0.3), transparent),
+    radial-gradient(1px 1px at 55% 45%, rgba(245,158,11,0.3), transparent);
+  background-size: 600px 600px;
+  opacity: 0.6;
+  z-index: 0;
+}
+.asura .topbar, .asura .hero, .asura .container, .asura .footer { position: relative; z-index: 1; }
+
+/* ───── TOP BAR ───── */
+.asura .topbar {
+  background: rgba(11,13,24,0.82);
+  border-bottom: 1px solid var(--line);
+  backdrop-filter: saturate(160%) blur(14px);
+}
+.asura .brand { color: var(--ink); letter-spacing: 0.02em; }
+.asura .brand-name .dot { color: var(--accent); text-shadow: 0 0 12px rgba(239,68,68,0.7); }
+.asura .brand-mark {
+  background: linear-gradient(135deg, var(--accent) 0%, #7f1d1d 100%);
+  box-shadow: 0 0 18px rgba(239,68,68,0.45), 0 2px 0 rgba(0,0,0,0.5) inset;
+  border: 1px solid #fca5a5;
+  color: #fff5e0;
+  font-family: 'Cinzel', serif;
+  font-weight: 900;
+}
+.asura .nav button { color: var(--muted); }
+.asura .nav button:hover { background: rgba(255,255,255,0.04); color: var(--ink); }
+.asura .nav button.active {
+  background: linear-gradient(180deg, #2a1018, #1c0a10);
+  color: #fecaca;
+  border: 1px solid #7f1d1d;
+  box-shadow: 0 0 12px rgba(239,68,68,0.25), 0 1px 0 rgba(255,255,255,0.05) inset;
+}
+.asura .currency-pills { background: rgba(255,255,255,0.03); border-color: var(--line); }
+.asura .cpill { color: var(--ink-2); }
+.asura .cpill .cico.gold  { background: linear-gradient(135deg,#fbbf24,#b45309); box-shadow:0 0 8px rgba(245,158,11,0.5); }
+.asura .cpill .cico.dia   { background: linear-gradient(135deg,#7dd3fc,#0369a1); box-shadow:0 0 8px rgba(96,165,250,0.5); }
+.asura .cpill .cico.stamp { background: linear-gradient(135deg,#ef4444,#7f1d1d); box-shadow:0 0 8px rgba(239,68,68,0.5); }
+.asura .nav-avatar {
+  background: linear-gradient(135deg, #7c3aed, #4c1d95);
+  border: 2px solid #2e1065;
+  color: #ede9fe;
+  box-shadow: 0 0 12px rgba(167,139,250,0.35);
+}
+.asura .nav-login-btn {
+  appearance: none; border: 1px solid var(--accent); background: transparent;
+  color: #fecaca; font-family: inherit; font-weight: 700;
+  padding: 7px 16px; border-radius: 999px; cursor: pointer;
+  font-size: 13px; letter-spacing: 0.05em;
+  transition: all .15s;
+  text-shadow: 0 0 8px rgba(239,68,68,0.4);
+}
+.asura .nav-login-btn:hover {
+  background: var(--accent); color: #fff;
+  box-shadow: 0 0 16px rgba(239,68,68,0.6);
+}
+.asura .nav-logout {
+  appearance: none; background: transparent; border: 0;
+  color: var(--muted); font: inherit; cursor: pointer;
+  padding: 6px 10px; border-radius: 8px;
+}
+.asura .nav-logout:hover { color: var(--accent); }
+
+/* ───── HERO ───── */
+.asura .hero-eyebrow {
+  background: linear-gradient(180deg, #2a1018, #1a0a10);
+  border: 1px solid #7f1d1d;
+  color: #fca5a5;
+  text-shadow: 0 0 8px rgba(239,68,68,0.4);
+}
+.asura .hero-eyebrow::before {
+  background: var(--accent);
+  box-shadow: 0 0 0 3px rgba(239,68,68,0.25), 0 0 10px rgba(239,68,68,0.7);
+}
+.asura .hero h1 {
+  font-family: 'Cinzel', 'Sarabun', serif;
+  font-weight: 800;
+  color: #f5f1e3;
+  text-shadow: 0 2px 24px rgba(0,0,0,0.6), 0 0 1px rgba(255,255,255,0.1);
+  letter-spacing: -0.01em;
+}
+.asura .hero h1 .accent {
+  background: linear-gradient(180deg, #fee2e2 0%, #ef4444 45%, #7f1d1d 100%);
+  -webkit-background-clip: text; background-clip: text;
+  -webkit-text-fill-color: transparent; color: transparent;
+  filter: drop-shadow(0 0 20px rgba(239,68,68,0.5));
+}
+.asura .hero p.lead { color: var(--ink-2); opacity: 0.85; }
+
+/* Buttons */
+.asura .btn-primary {
+  background: linear-gradient(180deg, #ef4444 0%, #b91c1c 100%);
+  color: #fff5e0;
+  border: 1px solid #fca5a5;
+  box-shadow:
+    0 0 0 1px rgba(0,0,0,0.4) inset,
+    0 0 20px rgba(239,68,68,0.35),
+    0 2px 0 #7f1d1d,
+    0 6px 16px rgba(0,0,0,0.5);
+  text-shadow: 0 1px 0 rgba(0,0,0,0.5);
+  letter-spacing: 0.03em;
+}
+.asura .btn-primary:hover {
+  background: linear-gradient(180deg, #f87171 0%, #dc2626 100%);
+  transform: translateY(-1px);
+  box-shadow:
+    0 0 0 1px rgba(0,0,0,0.4) inset,
+    0 0 28px rgba(239,68,68,0.55),
+    0 3px 0 #7f1d1d,
+    0 8px 20px rgba(0,0,0,0.55);
+}
+.asura .btn-primary:disabled {
+  background: linear-gradient(180deg,#374151,#1f2937);
+  border-color: var(--line); color: var(--muted-2);
+  box-shadow: none;
+}
+.asura .btn-secondary {
+  background: linear-gradient(180deg, #1e2240, #14172b);
+  color: var(--ink);
+  border: 1px solid var(--line-2);
+  box-shadow: 0 1px 0 rgba(255,255,255,0.04) inset, 0 4px 12px rgba(0,0,0,0.3);
+}
+.asura .btn-secondary:hover {
+  background: linear-gradient(180deg, #262b50, #181c38);
+  border-color: var(--accent);
+  color: #fecaca;
+}
+
+.asura .hero-stats { border-top-color: var(--line); }
+.asura .hero-stat .v { color: var(--ink); }
+.asura .hero-stat .v.accent { color: var(--warn); text-shadow: 0 0 12px rgba(245,158,11,0.5); }
+.asura .hero-stat .l { color: var(--muted); }
+.asura .hero-stat .dot {
+  background: var(--good);
+  box-shadow: 0 0 0 3px rgba(52,211,153,0.2), 0 0 10px rgba(52,211,153,0.6);
+}
+
+/* ───── LOGIN PANEL (replaces .hero-art on title screen) ───── */
+.asura .login-panel {
+  position: relative;
+  background:
+    linear-gradient(180deg, rgba(239,68,68,0.05) 0%, transparent 40%),
+    linear-gradient(180deg, #1a1e3a 0%, #11142a 100%);
+  border: 1px solid var(--line-2);
+  border-radius: 16px;
+  padding: 28px 28px 24px;
+  box-shadow:
+    0 0 0 1px rgba(239,68,68,0.15),
+    0 0 40px rgba(239,68,68,0.08),
+    0 20px 50px rgba(0,0,0,0.5);
+  overflow: hidden;
+}
+.asura .login-panel::before {
+  content: '';
+  position: absolute; top: 0; left: 0; right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, #ef4444 30%, #f59e0b 50%, #ef4444 70%, transparent);
+  box-shadow: 0 0 14px rgba(239,68,68,0.6);
+}
+.asura .login-head {
+  text-align: center;
+  margin-bottom: 18px;
+}
+.asura .login-head .crest {
+  width: 56px; height: 56px;
+  margin: 0 auto 10px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #fca5a5, #b91c1c 55%, #450a0a);
+  border: 2px solid #7f1d1d;
+  box-shadow:
+    0 0 24px rgba(239,68,68,0.5),
+    inset 0 -4px 8px rgba(0,0,0,0.4),
+    inset 0 2px 4px rgba(255,255,255,0.15);
+  display: flex; align-items: center; justify-content: center;
+  font-family: 'Cinzel', serif;
+  font-size: 26px; font-weight: 900;
+  color: #fff5e0;
+  text-shadow: 0 0 12px rgba(255,255,255,0.4), 0 2px 0 rgba(0,0,0,0.5);
+}
+.asura .login-head h3 {
+  margin: 0;
+  font-family: 'Cinzel', 'Sarabun', serif;
+  font-size: 20px; font-weight: 800;
+  color: var(--ink);
+  letter-spacing: 0.04em;
+}
+.asura .login-head .sub {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 12.5px;
+  letter-spacing: 0.06em; text-transform: uppercase;
+  font-family: 'Inter', sans-serif;
+}
+
+.asura .login-tabs {
+  display: grid; grid-template-columns: 1fr 1fr;
+  background: rgba(0,0,0,0.3);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 4px;
+  margin-bottom: 18px;
+}
+.asura .login-tabs button {
+  appearance: none; border: 0; background: transparent;
+  padding: 9px 10px;
+  color: var(--muted);
+  font: 600 13px/1 'Inter', 'Sarabun', sans-serif;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  border-radius: 7px;
+  transition: all .15s;
+}
+.asura .login-tabs button.active {
+  background: linear-gradient(180deg, #2a1018, #1c0a10);
+  color: #fecaca;
+  border: 1px solid #7f1d1d;
+  box-shadow: 0 0 12px rgba(239,68,68,0.25);
+}
+
+.asura .login-field { margin-bottom: 12px; }
+.asura .login-field label {
+  display: block;
+  font: 600 11px/1 'Inter', sans-serif;
+  letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+.asura .login-field input {
+  width: 100%;
+  padding: 11px 14px;
+  background: rgba(0,0,0,0.35);
+  border: 1px solid var(--line-2);
+  border-radius: 9px;
+  color: var(--ink);
+  font: 500 14px/1.2 'Inter', 'Sarabun', sans-serif;
+  outline: none;
+  transition: border-color .15s, box-shadow .15s, background .15s;
+}
+.asura .login-field input::placeholder { color: var(--muted-2); }
+.asura .login-field input:focus {
+  border-color: var(--accent);
+  background: rgba(0,0,0,0.5);
+  box-shadow: 0 0 0 3px rgba(239,68,68,0.15), 0 0 16px rgba(239,68,68,0.15);
+}
+
+.asura .login-error {
+  background: linear-gradient(180deg, #2a1018, #1c0a10);
+  border: 1px solid #7f1d1d;
+  color: #fca5a5;
+  padding: 9px 12px;
+  border-radius: 8px;
+  font-size: 12.5px;
+  margin-bottom: 12px;
+  display: flex; align-items: center; gap: 8px;
+}
+.asura .login-error::before {
+  content: '⚠';
+  color: var(--accent);
+  font-size: 14px;
+}
+
+.asura .login-submit {
+  width: 100%;
+  padding: 14px;
+  font-size: 15px;
+  border-radius: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  justify-content: center;
+}
+.asura .login-foot {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+  display: flex; justify-content: space-between; align-items: center;
+  font-size: 12px;
+  color: var(--muted);
+}
+.asura .login-foot a { color: #fca5a5; cursor: pointer; }
+.asura .login-foot a:hover { color: var(--accent); }
+
+.asura .login-welcome {
+  text-align: center;
+  padding: 8px 0 4px;
+}
+.asura .login-welcome .greet {
+  font-family: 'Cinzel', 'Sarabun', serif;
+  font-size: 18px; font-weight: 700;
+  color: var(--ink);
+  margin-bottom: 4px;
+}
+.asura .login-welcome .name {
+  color: var(--warn);
+  text-shadow: 0 0 12px rgba(245,158,11,0.4);
+}
+.asura .login-welcome .sub {
+  color: var(--muted);
+  font-size: 13px;
+  margin-bottom: 18px;
+}
+
+/* ───── CARDS / SECTIONS ───── */
+.asura .section-head h2 {
+  font-family: 'Cinzel', 'Sarabun', serif;
+  font-size: 22px;
+  color: var(--ink);
+  letter-spacing: 0.02em;
+}
+.asura .section-head h2::before {
+  content: '◆';
+  display: inline-block;
+  color: var(--accent);
+  margin-right: 10px;
+  font-size: 11px;
+  vertical-align: middle;
+  text-shadow: 0 0 8px rgba(239,68,68,0.6);
+}
+.asura .section-head .sub { color: var(--muted); }
+.asura .section-head .more { color: var(--muted); }
+.asura .section-head .more:hover { color: var(--accent); }
+
+.asura .card {
+  background: linear-gradient(180deg, var(--card) 0%, #11142a 100%);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow-card);
+}
+
+/* ───── KPI ───── */
+.asura .kpi {
+  background: linear-gradient(180deg, var(--card) 0%, #11142a 100%);
+  border-color: var(--line);
+  box-shadow: var(--shadow-card);
+}
+.asura .kpi:hover { border-color: var(--accent); box-shadow: 0 0 24px rgba(239,68,68,0.15), var(--shadow-md); }
+.asura .kpi .label { color: var(--muted); }
+.asura .kpi .value { color: var(--ink); }
+.asura .kpi .delta { color: var(--good); }
+.asura .kpi .delta.flat { color: var(--muted); }
+.asura .kpi .ico { background: rgba(255,255,255,0.04); color: var(--ink-2); }
+.asura .kpi .ico.pink   { background: linear-gradient(135deg,#2a1018,#451018); color: #fca5a5; box-shadow: 0 0 12px rgba(239,68,68,0.25); }
+.asura .kpi .ico.violet { background: linear-gradient(135deg,#2e1065,#1e1b4b); color: #c4b5fd; box-shadow: 0 0 12px rgba(167,139,250,0.25); }
+.asura .kpi .ico.blue   { background: linear-gradient(135deg,#1e3a8a,#1e293b); color: #93c5fd; box-shadow: 0 0 12px rgba(96,165,250,0.25); }
+.asura .kpi .ico.amber  { background: linear-gradient(135deg,#78350f,#451a03); color: #fcd34d; box-shadow: 0 0 12px rgba(245,158,11,0.25); }
+
+/* ───── NEWS ───── */
+.asura .news-tabs { border-bottom-color: var(--line); }
+.asura .news-tabs button { color: var(--muted); }
+.asura .news-tabs button:hover { color: var(--ink); }
+.asura .news-tabs button.active {
+  color: #fecaca;
+  border-bottom-color: var(--accent);
+  text-shadow: 0 0 8px rgba(239,68,68,0.4);
+}
+.asura .news-row { border-bottom-color: var(--line); }
+.asura .news-row:hover { background: rgba(239,68,68,0.05); }
+.asura .news-meta .ttl { color: var(--ink); }
+.asura .news-meta .ex { color: var(--muted); }
+.asura .news-date { color: var(--muted-2); }
+.asura .news-thumb { background: rgba(255,255,255,0.03); border-color: var(--line); }
+.asura .news-thumb.t-pink   { background: linear-gradient(135deg,#7f1d1d,#450a0a); color: #fca5a5; }
+.asura .news-thumb.t-blue   { background: linear-gradient(135deg,#1e3a8a,#172554); color: #93c5fd; }
+.asura .news-thumb.t-amber  { background: linear-gradient(135deg,#78350f,#451a03); color: #fcd34d; }
+.asura .news-thumb.t-violet { background: linear-gradient(135deg,#4c1d95,#2e1065); color: #c4b5fd; }
+.asura .news-thumb.t-mint   { background: linear-gradient(135deg,#065f46,#022c22); color: #6ee7b7; }
+.asura .news-meta .tag.pink   { color: #fca5a5; }
+.asura .news-meta .tag.blue   { color: #93c5fd; }
+.asura .news-meta .tag.amber  { color: #fcd34d; }
+.asura .news-meta .tag.violet { color: #c4b5fd; }
+.asura .news-meta .tag.mint   { color: #6ee7b7; }
+
+/* ───── PROFILE / MAIL ───── */
+.asura .profile-head { border-bottom-color: var(--line); }
+.asura .profile-art {
+  background: linear-gradient(135deg, #4c1d95, #1e1b4b);
+  border-color: var(--line-2);
+  color: #ede9fe;
+}
+.asura .profile-art .badge-lvl { background: var(--accent); border-color: #11142a; }
+.asura .profile-name { color: var(--ink); }
+.asura .profile-id { color: var(--muted); }
+.asura .stat-row + .stat-row { border-top-color: var(--line); }
+.asura .stat-row .l { color: var(--muted); }
+.asura .stat-row .l .sico.gold  { background: linear-gradient(135deg,#78350f,#451a03); color: #fcd34d; }
+.asura .stat-row .l .sico.dia   { background: linear-gradient(135deg,#1e3a8a,#172554); color: #93c5fd; }
+.asura .stat-row .l .sico.stamp { background: linear-gradient(135deg,#7f1d1d,#450a0a); color: #fca5a5; }
+.asura .stat-row .v { color: var(--ink); }
+.asura .pa-primary {
+  background: linear-gradient(180deg,#ef4444,#b91c1c);
+  border: 1px solid #fca5a5;
+  box-shadow: 0 0 16px rgba(239,68,68,0.3);
+}
+.asura .pa-primary:hover { background: linear-gradient(180deg,#f87171,#dc2626); }
+.asura .pa-ghost {
+  background: linear-gradient(180deg,#1e2240,#14172b);
+  color: var(--ink); border-color: var(--line-2);
+}
+.asura .pa-ghost:hover { border-color: var(--accent); color: #fecaca; }
+.asura .mail-tile {
+  background: linear-gradient(180deg, var(--card), #11142a);
+  border-color: var(--line);
+}
+.asura .mail-tile:hover { border-color: var(--accent); box-shadow: 0 0 20px rgba(239,68,68,0.15); }
+.asura .mail-tile .mico { background: linear-gradient(135deg,#2a1018,#451018); color: #fca5a5; }
+.asura .mail-tile .info .t { color: var(--ink); }
+.asura .mail-tile .info .s { color: var(--muted); }
+
+/* ───── TOP PLAYERS ───── */
+.asura .player-card {
+  background: linear-gradient(180deg, var(--card), #11142a);
+  border-color: var(--line);
+}
+.asura .player-card:hover { border-color: var(--line-2); box-shadow: var(--shadow-lg); }
+.asura .player-card .head { border-bottom-color: var(--line); }
+.asura .player-card .head .cap { color: var(--muted); }
+.asura .player-card.gold   .head .tier { color: var(--warn); text-shadow: 0 0 12px rgba(245,158,11,0.4); }
+.asura .player-card.violet .head .tier { color: #c4b5fd; text-shadow: 0 0 12px rgba(167,139,250,0.4); }
+.asura .player-card.mint   .head .tier { color: var(--good); text-shadow: 0 0 12px rgba(52,211,153,0.4); }
+.asura .player-card.gold   .player-art { background: radial-gradient(ellipse at center, #78350f 0%, #1a0e0a 80%); border-bottom-color: var(--line); }
+.asura .player-card.violet .player-art { background: radial-gradient(ellipse at center, #4c1d95 0%, #14102a 80%); border-bottom-color: var(--line); }
+.asura .player-card.mint   .player-art { background: radial-gradient(ellipse at center, #065f46 0%, #0a1a18 80%); border-bottom-color: var(--line); }
+.asura .player-art .hero-name { background: rgba(0,0,0,0.7); color: #fff5e0; border: 1px solid var(--line-2); }
+.asura .player-list .row + .row { border-top-color: var(--line); }
+.asura .player-list .rk { color: var(--muted-2); }
+.asura .player-list .pn { color: var(--ink-2); }
+.asura .player-list .lv { color: var(--muted); }
+
+/* ───── MEMBERS ───── */
+.asura .members-card { background: linear-gradient(180deg, var(--card), #11142a); border-color: var(--line); }
+.asura .members-filter input {
+  background: rgba(0,0,0,0.35); color: var(--ink); border-color: var(--line-2);
+}
+.asura .members-filter input:focus { border-color: var(--accent); background: rgba(0,0,0,0.5); }
+.asura .members-filter .count-chip {
+  background: linear-gradient(180deg,#2a1018,#1c0a10);
+  color: #fca5a5; border: 1px solid #7f1d1d;
+}
+.asura .avatar.empty { background: rgba(255,255,255,0.03); color: var(--muted-2); border-color: var(--line); }
+.asura .avatar { border-color: var(--line); box-shadow: 0 2px 0 rgba(0,0,0,0.3) inset, 0 1px 8px rgba(0,0,0,0.4); }
+.asura .avatar:hover { box-shadow: 0 0 18px rgba(239,68,68,0.4), 0 0 0 2px rgba(239,68,68,0.3); }
+
+/* ───── EVENT WEEK ───── */
+.asura .day-card {
+  background: linear-gradient(180deg, var(--card), #11142a);
+  border-color: var(--line);
+  color: var(--ink);
+}
+.asura .day-card:hover { border-color: var(--line-2); }
+.asura .day-card .dlbl { color: var(--muted); }
+.asura .day-card .multiplier { color: var(--ink); }
+.asura .day-card .multiplier .pct { color: var(--warn); }
+.asura .day-card .reward { color: var(--muted); }
+.asura .day-card.today {
+  background: linear-gradient(180deg, #2a1018 0%, #11142a 100%);
+  border-color: var(--accent);
+  color: #fff5e0;
+  box-shadow: 0 0 24px rgba(239,68,68,0.3), inset 0 0 24px rgba(239,68,68,0.1);
+}
+.asura .day-card.today .dlbl,
+.asura .day-card.today .multiplier { color: #fecaca; }
+.asura .day-card.today .multiplier .pct { color: var(--warn); }
+.asura .day-card.today .reward { color: #fca5a5; }
+.asura .day-card.today .badge-today {
+  background: var(--accent);
+  box-shadow: 0 0 12px rgba(239,68,68,0.6);
+}
+
+/* ───── QUICK ACTIONS ───── */
+.asura .action-tile {
+  background: linear-gradient(180deg, var(--card), #11142a);
+  border-color: var(--line);
+}
+.asura .action-tile:hover { border-color: var(--accent); box-shadow: 0 0 20px rgba(239,68,68,0.15); }
+.asura .action-tile .at { color: var(--ink); }
+.asura .action-tile .ad { color: var(--muted); }
+.asura .action-tile .aico { background: rgba(255,255,255,0.04); color: var(--ink-2); }
+.asura .action-tile.a-pink   .aico { background: linear-gradient(135deg,#2a1018,#451018); color: #fca5a5; box-shadow: 0 0 10px rgba(239,68,68,0.25); }
+.asura .action-tile.a-blue   .aico { background: linear-gradient(135deg,#1e3a8a,#172554); color: #93c5fd; box-shadow: 0 0 10px rgba(96,165,250,0.25); }
+.asura .action-tile.a-amber  .aico { background: linear-gradient(135deg,#78350f,#451a03); color: #fcd34d; box-shadow: 0 0 10px rgba(245,158,11,0.25); }
+.asura .action-tile.a-violet .aico { background: linear-gradient(135deg,#4c1d95,#2e1065); color: #c4b5fd; box-shadow: 0 0 10px rgba(167,139,250,0.25); }
+.asura .action-tile.a-mint   .aico { background: linear-gradient(135deg,#065f46,#022c22); color: #6ee7b7; box-shadow: 0 0 10px rgba(52,211,153,0.25); }
+.asura .action-tile.a-red    .aico { background: linear-gradient(135deg,#7f1d1d,#450a0a); color: #fca5a5; box-shadow: 0 0 10px rgba(239,68,68,0.25); }
+.asura .action-tile.a-slate  .aico { background: linear-gradient(135deg,#374151,#1f2937); color: var(--ink-2); }
+
+/* ───── BOARD ───── */
+.asura .board-list .brow { border-bottom-color: var(--line); }
+.asura .board-list .brow:hover { background: rgba(239,68,68,0.05); }
+.asura .board-list .qtitle { color: var(--ink); }
+.asura .board-list .qmeta { color: var(--muted-2); }
+.asura .board-list .reply-count { color: var(--muted); }
+.asura .qico    { background: linear-gradient(135deg,#2a1018,#451018); color: #fca5a5; box-shadow: 0 0 10px rgba(239,68,68,0.2); }
+.asura .qico.q2 { background: linear-gradient(135deg,#1e3a8a,#172554); color: #93c5fd; box-shadow: 0 0 10px rgba(96,165,250,0.2); }
+.asura .qico.q3 { background: linear-gradient(135deg,#78350f,#451a03); color: #fcd34d; box-shadow: 0 0 10px rgba(245,158,11,0.2); }
+.asura .qico.q4 { background: linear-gradient(135deg,#4c1d95,#2e1065); color: #c4b5fd; box-shadow: 0 0 10px rgba(167,139,250,0.2); }
+
+/* ───── FOOTER ───── */
+.asura .footer {
+  background: #08091a;
+  border-top: 1px solid var(--line);
+}
+.asura .footer .links { color: var(--muted); }
+.asura .footer .links a:hover { color: var(--accent); }
+.asura .footer .meta { color: var(--muted-2); }
+
+/* ───── TOAST ───── */
+.asura .toast {
+  background: linear-gradient(180deg, #1a1e3a, #11142a);
+  border: 1px solid var(--accent);
+  color: var(--ink);
+  box-shadow: 0 0 24px rgba(239,68,68,0.25), 0 20px 50px rgba(0,0,0,0.6);
+}
+.asura .toast .tico {
+  background: linear-gradient(135deg,#ef4444,#7f1d1d);
+  box-shadow: 0 0 12px rgba(239,68,68,0.5);
+}

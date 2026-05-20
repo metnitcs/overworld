@@ -1,5 +1,7 @@
 import { useEffect } from 'react'
 import { useGame } from './game/store'
+import { api, ApiError } from './api/client'
+import { AuthScreen } from './ui/AuthScreen'
 import { TitleScreen } from './ui/TitleScreen'
 import { CreateScreen } from './ui/CreateScreen'
 import { GameScreen } from './ui/GameScreen'
@@ -45,6 +47,28 @@ export default function App() {
       window.removeEventListener('keydown', onModalKey)
     }
   }, [])
+
+  // Resume an authenticated session after a reload: persist hydrated the token
+  // but the screen is still 'auth' — bump it to the Portal and probe whether
+  // the user already has a character (so the Portal's CTA label is correct).
+  useEffect(() => {
+    const st = useGame.getState()
+    if (!st.token || st.screen !== 'auth') return
+    useGame.setState({ screen: 'title' })
+    api.getCharacter(st.token)
+      .then(() => useGame.setState({ hasSave: true }))
+      .catch((err) => {
+        if (err instanceof ApiError && err.status === 401) {
+          useGame.getState().logout()
+        } else if (err instanceof ApiError && err.status === 404) {
+          useGame.setState({ hasSave: false })
+        }
+      })
+  }, [])
+
+  if (screen === 'auth') {
+    return <AuthScreen />
+  }
 
   // Portal is a full-page scrolling web layout; every other screen lives in
   // the fixed 1280×860 game frame. See docs/adr/0001-dual-design-system-pre-game-vs-in-game.md

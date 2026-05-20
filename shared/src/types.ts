@@ -132,7 +132,7 @@ export interface BattleEnemy {
   drop?: { item: string; chance: number }
 }
 
-export type Screen = 'title' | 'create' | 'game' | 'battle'
+export type Screen = 'auth' | 'title' | 'create' | 'game' | 'battle'
 
 export type ModalType =
   | 'none'

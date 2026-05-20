@@ -12,6 +12,7 @@ import {
   CLASSES, MAPS, ITEMS, RECIPES,
   deriveStats, applyExp, scaleEnemy, rollLoot, resolveEnhance,
 } from '@asura/shared'
+import { api, ApiError, type SaveBody } from '../api/client'
 
 interface SpawnedMonster {
   x: number
@@ -34,14 +35,23 @@ interface Store {
   monsters: SpawnedMonster[]
   chat: ChatMessage[]
   battleLog: string[]
+  /** Whether the authenticated user has a character on the server. */
   hasSave: boolean
+  /** Bearer JWT after login/register. Persisted across reloads. */
+  token: string | null
+  /** Authenticated username (for display in top bar / logout). */
+  username: string | null
   // Setters
   setScreen: (s: Screen) => void
   setModal: (m: ModalType) => void
-  // Game lifecycle
-  newCharacter: (name: string, raceId: string, classId: string) => void
-  loadFromStorage: () => void
-  saveToStorage: () => void
+  // Auth lifecycle
+  register: (username: string, password: string) => Promise<void>
+  login: (username: string, password: string) => Promise<void>
+  logout: () => void
+  // Game lifecycle (server-backed; names preserved so existing UI keeps compiling)
+  newCharacter: (name: string, raceId: string, classId: string) => Promise<void>
+  loadFromStorage: () => Promise<void>
+  saveToStorage: () => Promise<void>
   // Movement
   tryMove: (dx: number, dy: number) => void
   warpTo: (mapId: string, x: number, y: number) => void
@@ -122,64 +132,120 @@ function spawnForMap(mapId: string, playerX: number, playerY: number): SpawnedMo
   return out
 }
 
-const SAVE_KEY = 'asura_online_save_v1'
+/** Persists only the auth token. Server is now the source of truth for game state. */
+const AUTH_KEY = 'asura_online_auth_v1'
+
+/** Build the persisted PUT body from the in-memory game state — drops the
+ *  identity fields (name/raceId/classId) which are set at creation and
+ *  immutable on the server, leaving the mutable slice. */
+function toSaveBody(g: GameState): SaveBody {
+  // Use a destructure to discard identity fields cleanly.
+  const { name: _n, raceId: _r, classId: _c, ...rest } = g
+  void _n; void _r; void _c
+  return rest
+}
 
 export const useGame = create<Store>()(
   persist(
     (set, get) => ({
       game: initialGame,
-      screen: 'title',
+      screen: 'auth',
       modal: 'none',
       battle: null,
       monsters: [],
       chat: [],
       battleLog: [],
-      hasSave: !!localStorage.getItem(SAVE_KEY),
+      hasSave: false,
+      token: null,
+      username: null,
 
       setScreen: (s) => set({ screen: s }),
       setModal: (m) => set({ modal: m }),
 
-      newCharacter: (name, raceId, classId) => {
-        const base: GameState = { ...initialGame, name, raceId, classId }
-        const g = deriveStats(base)
-        g.hp = g.maxHp
-        g.mp = g.maxMp
+      register: async (username, password) => {
+        const r = await api.register(username, password)
+        set({ token: r.token, username: r.user.username, screen: 'create' })
+      },
+
+      login: async (username, password) => {
+        const r = await api.login(username, password)
+        // Land on the Portal (Title); probe whether a character exists so the
+        // Portal's "Continue / New" button can pick the right label.
+        set({ token: r.token, username: r.user.username, screen: 'title' })
+        try {
+          await api.getCharacter(r.token)
+          set({ hasSave: true })
+        } catch (err) {
+          if (err instanceof ApiError && err.status === 404) {
+            set({ hasSave: false })
+          } else {
+            throw err
+          }
+        }
+      },
+
+      logout: () => {
+        set({
+          token: null,
+          username: null,
+          hasSave: false,
+          game: initialGame,
+          monsters: [],
+          chat: [],
+          battleLog: [],
+          battle: null,
+          screen: 'auth',
+        })
+      },
+
+      newCharacter: async (name, raceId, classId) => {
+        const token = get().token
+        if (!token) throw new Error('not authenticated')
+        const r = await api.createCharacter(token, { name, raceId, classId })
+        const g = r.character
         set({
           game: g,
           monsters: spawnForMap(g.map, g.px, g.py),
           chat: [],
           screen: 'game',
+          hasSave: true,
         })
         get().log(`ยินดีต้อนรับ ${name}! เริ่มต้นที่ ${MAPS[g.map].name}`, 'system')
         get().log('ใช้ลูกศรหรือ WASD เพื่อเดิน · เดินชนมอนเพื่อต่อสู้', 'system')
       },
 
-      loadFromStorage: () => {
-        const raw = localStorage.getItem(SAVE_KEY)
-        if (!raw) return
-        try {
-          const data = JSON.parse(raw)
-          const g = deriveStats(data)
-          set({
-            game: g,
-            monsters: spawnForMap(g.map, g.px, g.py),
-            chat: [],
-            screen: 'game',
-            hasSave: true,
-          })
-          get().log('โหลดเกมสำเร็จ', 'good')
-        } catch {
-          alert('เซฟเสียหาย')
-        }
+      // Despite the legacy name, this now loads from the server. Kept named
+      // `loadFromStorage` so existing UI callers continue to compile.
+      loadFromStorage: async () => {
+        const token = get().token
+        if (!token) throw new Error('not authenticated')
+        const r = await api.getCharacter(token)
+        const g = r.character
+        set({
+          game: g,
+          monsters: spawnForMap(g.map, g.px, g.py),
+          chat: [],
+          screen: 'game',
+          hasSave: true,
+        })
+        get().log('โหลดเกมสำเร็จ', 'good')
       },
 
-      saveToStorage: () => {
+      // Likewise — now PUTs the persistent state to the server (the
+      // localStorage save is gone; only the auth token is persisted).
+      saveToStorage: async () => {
+        const token = get().token
+        if (!token) {
+          alert('ยังไม่ได้ login')
+          return
+        }
         try {
-          localStorage.setItem(SAVE_KEY, JSON.stringify(get().game))
+          await api.saveCharacter(token, toSaveBody(get().game))
           set({ hasSave: true })
           get().log('💾 บันทึกเกมสำเร็จ', 'good')
-        } catch {
-          alert('บันทึกไม่ได้ (localStorage เต็ม?)')
+        } catch (err) {
+          const msg = err instanceof ApiError ? `(${err.status})` : ''
+          alert(`บันทึกไม่ได้ ${msg}`)
         }
       },
 
@@ -454,8 +520,10 @@ export const useGame = create<Store>()(
       },
     }),
     {
-      name: SAVE_KEY,
-      partialize: (s) => ({ game: s.game }),
+      name: AUTH_KEY,
+      // Only the auth token + username are persisted client-side; the game
+      // state lives on the server now (slice 5 endpoints).
+      partialize: (s) => ({ token: s.token, username: s.username }),
     },
   ),
 )
