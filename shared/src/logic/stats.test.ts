@@ -4,10 +4,11 @@ import { deriveStats, deriveCombatStats } from './stats'
 import { STAT_BASE, BASE_HP, BASE_MP } from '../data'
 
 /** Minimal GameState for stat tests; callers override the relevant fields.
- *  All primary stats default to STAT_BASE (10) — the Lv1 starting allocation. */
+ *  Slice 25: race/class no longer contribute legacy hp/atk/def/spd offsets,
+ *  so the fixture's raceId / classId values don't influence the formulas. */
 function gs(overrides: Partial<GameState> = {}): GameState {
   return {
-    name: 'T', raceId: 'mara', classId: 'berserk',
+    name: 'T', raceId: 'human', classId: 'berserk',
     lv: 1, exp: 0,
     hp: 9999, maxHp: 0, mp: 9999, maxMp: 0,
     atk: 0, def: 0, spd: 0, gold: 0,
@@ -22,66 +23,66 @@ function gs(overrides: Partial<GameState> = {}): GameState {
 }
 
 describe('deriveStats — primary-stat formulas', () => {
-  it('maxHp = BASE_HP + race.hp + VIT*10 + (lv-1)*5', () => {
-    // Lv1, mara (hp110), VIT 10 → 50 + 110 + 100 + 0 = 260
-    const g = deriveStats(gs({ raceId: 'mara', classId: 'berserk', lv: 1 }))
-    expect(g.maxHp).toBe(BASE_HP + 110 + 10 * 10 + 0)
+  it('maxHp = BASE_HP + VIT*10 + (lv-1)*5  (no race offset)', () => {
+    // Lv1, VIT 10 → 50 + 100 + 0 = 150
+    const g = deriveStats(gs({ lv: 1 }))
+    expect(g.maxHp).toBe(BASE_HP + 10 * 10)
 
-    // bump VIT to 20 → 50 + 110 + 200 = 360
-    const beefy = deriveStats(gs({ raceId: 'mara', classId: 'berserk', lv: 1, vit: 20 }))
-    expect(beefy.maxHp).toBe(BASE_HP + 110 + 20 * 10)
+    // VIT 20 → 50 + 200 = 250
+    const beefy = deriveStats(gs({ lv: 1, vit: 20 }))
+    expect(beefy.maxHp).toBe(BASE_HP + 20 * 10)
   })
 
-  it('maxMp = BASE_MP + race.mp + class.mp + INT*3 + (lv-1)*2', () => {
-    // Lv1, mara (mp80), berserk (mp0), INT 10 → 20 + 80 + 0 + 30 + 0 = 130
-    const g = deriveStats(gs({ raceId: 'mara', classId: 'berserk', lv: 1 }))
-    expect(g.maxMp).toBe(BASE_MP + 80 + 0 + 30 + 0)
+  it('maxMp = BASE_MP + INT*3 + (lv-1)*2  (no race/class offset)', () => {
+    // Lv1, INT 10 → 20 + 30 = 50
+    const g = deriveStats(gs({ lv: 1 }))
+    expect(g.maxMp).toBe(BASE_MP + 30)
   })
 
-  it('pAtk scales with STR: race.atk + class.atk + STR*2 + floor((lv-1)*1.5)', () => {
-    // mara atk12 + berserk atk6 + STR10*2 = 38
-    const g = deriveStats(gs({ raceId: 'mara', classId: 'berserk', lv: 1 }))
-    expect(g.atk).toBe(12 + 6 + 10 * 2)
+  it('pAtk scales with STR only (race/class atk offsets removed in Slice 25)', () => {
+    // STR 10 → 20 + 0 = 20
+    const g = deriveStats(gs({ lv: 1 }))
+    expect(g.atk).toBe(10 * 2)
 
-    // STR 50 → +80 from STR alone
-    const buff = deriveStats(gs({ raceId: 'mara', classId: 'berserk', lv: 1, str: 50 }))
-    expect(buff.atk).toBe(12 + 6 + 50 * 2)
+    // STR 50 → 100
+    const buff = deriveStats(gs({ lv: 1, str: 50 }))
+    expect(buff.atk).toBe(50 * 2)
   })
 
-  it('pDef = race.def + class.def + floor(VIT*0.5) + floor((lv-1)*1.0)', () => {
-    // mara def8 + berserk def2 + VIT10*0.5=5 + 0 = 15
-    const g = deriveStats(gs({ raceId: 'mara', classId: 'berserk', lv: 1 }))
-    expect(g.def).toBe(8 + 2 + 5)
+  it('pDef = floor(VIT*0.5) + floor((lv-1)*1.0)  (no race/class offset)', () => {
+    // VIT 10 → 5 + 0 = 5
+    const g = deriveStats(gs({ lv: 1 }))
+    expect(g.def).toBe(5)
   })
 
-  it('spd = race.spd + class.spd + floor(AGI*0.5) + floor((lv-1)*0.4)', () => {
-    // mara spd10 + berserk spd1 + AGI10*0.5=5 = 16
-    const g = deriveStats(gs({ raceId: 'mara', classId: 'berserk', lv: 1 }))
-    expect(g.spd).toBe(10 + 1 + 5)
+  it('spd = floor(AGI*0.5) + floor((lv-1)*0.4)  (no race/class offset)', () => {
+    // AGI 10, Lv 1 → 5 + 0 = 5
+    const g = deriveStats(gs({ lv: 1 }))
+    expect(g.spd).toBe(5)
   })
 
   it('weapon ATK + enhance (+3 per plus) folds into pAtk', () => {
-    // base 38 ; sword-1 atk8 +2 → +8+6 = 14 → 52
+    // base pAtk (STR 10) = 20 ; sword-1 atk 8 + plus 2 (+6) → 20 + 14 = 34
     const g = deriveStats(gs({
-      lv: 1, raceId: 'mara', classId: 'berserk',
+      lv: 1,
       equipWeapon: 'sword-1',
       plus: { 'sword-1_w': 2 },
     }))
-    expect(g.atk).toBe(12 + 6 + 20 + 8 + 6)
+    expect(g.atk).toBe(20 + 8 + 6)
   })
 
   it('weapon mATK folds into mAtk; enhance adds +3 per plus only when the weapon has matk', () => {
-    // Slice 24 fix: staff-1 has matk 4. Base mAtk = INT*2 = 20.
-    // With staff-1 equipped: mAtk = 20 + 4 = 24
+    // base mAtk (INT 10) = 20
+    // staff-1 (matk 4) → 24
     const eq = deriveCombatStats(gs({ lv: 1, equipWeapon: 'staff-1' }))
     expect(eq.mAtk).toBe(20 + 4)
-    // Plus 2 → +6 mAtk → 30
+    // plus 2 → +6 → 30
     const enh = deriveCombatStats(gs({
       lv: 1, equipWeapon: 'staff-1',
       plus: { 'staff-1_w': 2 },
     }))
     expect(enh.mAtk).toBe(20 + 4 + 6)
-    // Plus on a non-matk weapon (sword-1) does NOT bump mAtk
+    // non-matk weapon plus → mAtk unchanged
     const noMatk = deriveCombatStats(gs({
       lv: 1, equipWeapon: 'sword-1',
       plus: { 'sword-1_w': 5 },
@@ -90,21 +91,21 @@ describe('deriveStats — primary-stat formulas', () => {
   })
 
   it('armor DEF + enhance (+2 per plus) folds into pDef', () => {
-    // base 15 ; armor-1 def5 +3 → +5+6 = 11 → 26
+    // base pDef (VIT 10) = 5 ; armor-1 def 5 + plus 3 (+6) → 5 + 11 = 16
     const g = deriveStats(gs({
-      lv: 1, raceId: 'mara', classId: 'berserk',
+      lv: 1,
       equipArmor: 'armor-1',
       plus: { 'armor-1_a': 3 },
     }))
-    expect(g.def).toBe(8 + 2 + 5 + 5 + 6)
+    expect(g.def).toBe(5 + 5 + 6)
   })
 
   it('clamps current hp/mp to new maxima; falsy current = full', () => {
-    const capped = deriveStats(gs({ raceId: 'mara', lv: 1, hp: 9999, mp: 9999 }))
+    const capped = deriveStats(gs({ lv: 1, hp: 9999, mp: 9999 }))
     expect(capped.hp).toBe(capped.maxHp)
     expect(capped.mp).toBe(capped.maxMp)
 
-    const filled = deriveStats(gs({ raceId: 'mara', lv: 1, hp: 0, mp: 0 }))
+    const filled = deriveStats(gs({ lv: 1, hp: 0, mp: 0 }))
     expect(filled.hp).toBe(filled.maxHp)
     expect(filled.mp).toBe(filled.maxMp)
   })
@@ -112,23 +113,19 @@ describe('deriveStats — primary-stat formulas', () => {
 
 describe('deriveCombatStats — accuracy / dodge / crit / mAtk / mDef', () => {
   it('acc = 85 + Lv + floor(DEX * 1.5) — high baseline so low-Lv players rarely miss', () => {
-    // Lv 1, DEX 10: 85 + 1 + 15 = 101
     expect(deriveCombatStats(gs({ lv: 1, dex: 10 })).acc).toBe(101)
-    // Lv 5, DEX 50: 85 + 5 + 75 = 165
     expect(deriveCombatStats(gs({ lv: 5, dex: 50 })).acc).toBe(165)
   })
 
   it('dodge = floor(Lv*0.5 + AGI*0.4) — slow scaling so monsters rarely miss too', () => {
-    // Lv 1, AGI 10: floor(0.5 + 4) = 4
     expect(deriveCombatStats(gs({ lv: 1, agi: 10 })).dodge).toBe(4)
-    // Lv 10, AGI 50: floor(5 + 20) = 25
     expect(deriveCombatStats(gs({ lv: 10, agi: 50 })).dodge).toBe(25)
   })
 
   it('crit = min(50, floor(LUK * 0.3))', () => {
     expect(deriveCombatStats(gs({ luk: 10 })).crit).toBe(3)
     expect(deriveCombatStats(gs({ luk: 100 })).crit).toBe(30)
-    expect(deriveCombatStats(gs({ luk: 200 })).crit).toBe(50) // capped
+    expect(deriveCombatStats(gs({ luk: 200 })).crit).toBe(50)
   })
 
   it('mAtk = INT*2 + floor((lv-1)*1.0)', () => {

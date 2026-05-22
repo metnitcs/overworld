@@ -1,6 +1,10 @@
 import { useState } from 'react'
 import { useGame } from '../game/store'
-import { CLASSES, STARTER_RACE, TRANSCEND_LV } from '@asura/shared'
+import {
+  CLASSES, STARTER_RACE, TRANSCEND_LV,
+  STAT_BASE, BASE_HP, BASE_MP,
+  type PrimaryStat, type StatModifier,
+} from '@asura/shared'
 
 // Slice 17: race is auto-set to STARTER_RACE (มนุษย์) at creation. The Lv10
 // race-change quest is where the player picks มนุษย์/มาร/เทพ. Create flow
@@ -43,24 +47,29 @@ export function CreateScreen() {
       </div>
 
       <div className="create-body">
-        {/* Preview */}
+        {/* Preview — Slice 25: race modifier folded into Lv1 primary stats */}
         <aside className="preview-card">
           <div className="preview-art">
             {STARTER_RACE.emoji}
           </div>
           <div className="preview-name">{STARTER_RACE.name}</div>
           <div className="preview-sub">{selectedClass.emoji} {selectedClass.name}</div>
+          {/* Starter race is human → modifiers={} so all primary stats = STAT_BASE */}
           <div className="preview-stats">
-            <div className="stat"><span className="k">HP</span><span className="v">{STARTER_RACE.hp}</span></div>
-            <div className="stat"><span className="k">MP</span><span className="v">{STARTER_RACE.mp + selectedClass.mp}</span></div>
-            <div className="stat"><span className="k">ATK</span><span className="v">{STARTER_RACE.atk + selectedClass.atk}</span></div>
-            <div className="stat"><span className="k">DEF</span><span className="v">{STARTER_RACE.def + selectedClass.def}</span></div>
-            <div className="stat"><span className="k">SPD</span><span className="v">{STARTER_RACE.spd + selectedClass.spd}</span></div>
+            <div className="stat"><span className="k">HP</span><span className="v">{BASE_HP + STAT_BASE * 10}</span></div>
+            <div className="stat"><span className="k">MP</span><span className="v">{BASE_MP + STAT_BASE * 3}</span></div>
+            <div className="stat"><span className="k">pATK</span><span className="v">{STAT_BASE * 2}</span></div>
+            <div className="stat"><span className="k">mATK</span><span className="v">{STAT_BASE * 2}</span></div>
+            <div className="stat"><span className="k">pDEF</span><span className="v">{Math.floor(STAT_BASE * 0.5)}</span></div>
             <div className="stat"><span className="k">สกิล</span><span className="v" style={{ fontSize: 12 }}>{selectedClass.skill.name}</span></div>
+          </div>
+          <div style={{ fontSize: 11, marginTop: 8, color: 'var(--muted)', lineHeight: 1.5 }}>
+            ทุกตัวเริ่ม STR/INT/DEX/AGI/LUK/VIT = <b>{STAT_BASE}</b> เท่ากัน
+            <br />Lv up = +5 points ให้กระจายเอง
           </div>
         </aside>
 
-        {/* Class picker — only one section now since race is auto */}
+        {/* Class picker — Slice 25: show growth recommendation instead of legacy atk/def offsets */}
         <section className="picker-card" style={{ gridColumn: 'span 2' }}>
           <div className="picker-head">เลือกอาชีพ</div>
           <div className="picker-list">
@@ -73,7 +82,8 @@ export function CreateScreen() {
                 <div className="emoji">{c.emoji}</div>
                 <div className="info">
                   <div className="nm">{c.name}</div>
-                  <div className="ds">สกิล: {c.skill.name} · ATK+{c.atk} DEF+{c.def}</div>
+                  <div className="ds">{c.desc}</div>
+                  <ClassGrowthHint growth={c.growth} skillName={c.skill.name} />
                 </div>
               </div>
             ))}
@@ -106,6 +116,31 @@ export function CreateScreen() {
           {busy ? 'กำลังสร้าง…' : 'ยืนยัน เริ่มผจญภัย'} <span className="arrow">→</span>
         </button>
       </div>
+    </div>
+  )
+}
+
+/** Slice 25 hint: list which stats this class's growth weights prefer.
+ *  Purely advisory — does NOT auto-allocate. Helps newcomers know what to
+ *  pump when they get their first level-up points. */
+const STAT_LABEL: Record<PrimaryStat, string> = {
+  str: 'STR', int: 'INT', dex: 'DEX', agi: 'AGI', luk: 'LUK', vit: 'VIT',
+}
+const STATS_ORDER: PrimaryStat[] = ['str', 'int', 'dex', 'agi', 'luk', 'vit']
+function ClassGrowthHint({
+  growth, skillName,
+}: { growth: StatModifier; skillName: string }) {
+  // Sort by weight desc so the biggest recommendations show first.
+  const rec = STATS_ORDER
+    .map((k) => [k, growth[k] ?? 0] as const)
+    .filter(([, v]) => v > 0)
+    .sort((a, b) => b[1] - a[1])
+  return (
+    <div style={{ fontSize: 10, color: 'var(--muted-2)', marginTop: 2 }}>
+      สกิล: <b>{skillName}</b>
+      {rec.length > 0 && (
+        <> · แนะนำเทใส่: {rec.map(([k, v]) => `${STAT_LABEL[k]}×${v}`).join(' / ')}</>
+      )}
     </div>
   )
 }

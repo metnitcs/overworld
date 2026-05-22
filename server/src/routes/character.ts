@@ -3,9 +3,10 @@ import { z } from 'zod'
 import type { Character, InventoryItem } from '@prisma/client'
 import {
   deriveStats, type GameState,
-  STARTER_RACE, AVAILABLE_RACES, CHARACTER_SLOT_LIMIT, TRANSCEND_LV,
+  STARTER_RACE, AVAILABLE_RACES, RACES, CHARACTER_SLOT_LIMIT, TRANSCEND_LV,
   STAT_BASE, STAT_HARD_CAP,
   spendPoints, resetStats,
+  applyRaceModifiers, shiftRaceModifierDiff,
   type PrimaryStat,
 } from '@asura/shared'
 
@@ -167,7 +168,10 @@ export function registerCharacterRoutes(app: FastifyInstance): void {
     // Derive initial stats via the shared rules — starter race is fixed.
     // Slice 23: new chars start with STAT_BASE in every primary stat and
     // 0 unspent points (Lv 1 has no level-up bonus yet).
-    const derived = deriveStats({
+    // Slice 25: apply the starter race's stat modifiers on top of the base
+    // pool so racial flavor lands at creation. Subsequent Lv ups grant
+    // unspentPoints that the player allocates manually.
+    const baseState: GameState = {
       name,
       raceId: STARTER_RACE.id,
       classId,
@@ -184,7 +188,9 @@ export function registerCharacterRoutes(app: FastifyInstance): void {
       plus: {},
       map: 'village', px: 5, py: 5, steps: 0,
       transcended: false,
-    })
+    }
+    const withRace = applyRaceModifiers(baseState, STARTER_RACE.modifiers)
+    const derived = deriveStats(withRace)
 
     const created = await app.prisma.character.create({
       data: {
@@ -354,9 +360,33 @@ export function registerCharacterRoutes(app: FastifyInstance): void {
       return reply.code(409).send({ error: `must be Lv ${TRANSCEND_LV}+ to transcend` })
     }
 
+    // Slice 25: shift primary stats by the (newRace - oldRace) modifier
+    // diff so the racial flavor follows the player without wiping their
+    // hard-earned allocation. shiftRaceModifierDiff clamps each stat at
+    // STAT_BASE so a strongly negative diff can't sink anyone below floor.
+    const oldRace = RACES.find((r) => r.id === existing.raceId)
+    const newRace = RACES.find((r) => r.id === raceId)
+    if (!newRace) {
+      return reply.code(400).send({ error: 'raceId not found' })
+    }
+    const shifted = shiftRaceModifierDiff(
+      toApiCharacter(existing),
+      oldRace?.modifiers ?? {},
+      newRace.modifiers,
+    )
+    const next = deriveStats({ ...shifted, raceId, transcended: true })
+
     const updated = await app.prisma.character.update({
       where: { id: existing.id },
-      data: { raceId, transcended: true },
+      data: {
+        raceId, transcended: true,
+        str: next.str, int: next.int, dex: next.dex,
+        agi: next.agi, luk: next.luk, vit: next.vit,
+        // Re-cache derived columns (VIT/INT shifts change HP/MP/etc).
+        maxHp: next.maxHp, maxMp: next.maxMp,
+        hp: next.hp, mp: next.mp,
+        atk: next.atk, def: next.def, spd: next.spd,
+      },
       include: { inventory: true },
     })
     return reply.send({ character: toApiCharacter(updated) })

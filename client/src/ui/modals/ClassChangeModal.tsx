@@ -22,8 +22,9 @@ export function ClassChangeModal() {
               <div className="flex-1 min-w-0">
                 <div className="font-bold text-kw-blue-deep text-sm">{c.name}</div>
                 <div className="text-[10px] text-kw-text-dim">
-                  สกิล: {c.skill.name} · ATK+{c.atk} DEF+{c.def}
+                  สกิล: {c.skill.name}
                 </div>
+                <div className="text-[10px] text-kw-text-dim">{c.desc}</div>
               </div>
               {cur ? (
                 <span className="text-[10px] text-green-700 font-semibold">ปัจจุบัน</span>

@@ -325,6 +325,27 @@ describe('POST /api/character/:id/transcend (Slice 17 race-change)', () => {
     expect(body.character.transcended).toBe(true)
   })
 
+  it('Slice 25 — shifts primary stats by the (newRace − oldRace) modifier diff', async () => {
+    // Starter race = human (no modifiers). Transcending to มาร (str+3 vit+2
+    // int-3 luk-2) on a fresh Lv-TRANSCEND_LV char with all stats at 10
+    // should bump str/vit and CLAMP int/luk at 10 (the floor).
+    const token = await registerAndGetToken('test_trans_shift')
+    const id = await makeCharAtLv(token, 'Shifty', TRANSCEND_LV)
+    const res = await app.inject({
+      method: 'POST', url: `/api/character/${id}/transcend`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { raceId: 'mara' },
+    })
+    expect(res.statusCode).toBe(200)
+    const c = (res.json() as { character: Record<string, number> }).character
+    expect(c.str).toBe(13)            // 10 + 3
+    expect(c.vit).toBe(12)            // 10 + 2
+    expect(c.int).toBe(10)            // 10 - 3 → clamped to 10
+    expect(c.luk).toBe(10)            // 10 - 2 → clamped to 10
+    expect(c.dex).toBe(10)
+    expect(c.agi).toBe(10)
+  })
+
   it('rejects under-lv', async () => {
     const token = await registerAndGetToken('test_trans_under')
     const id = await makeCharAtLv(token, 'Young', TRANSCEND_LV - 1)

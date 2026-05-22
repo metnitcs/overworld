@@ -1,13 +1,28 @@
+/** Slice 25: race + class redesigned around primary stats.
+ *  - Race contributes flat *modifiers* applied to the 6 primary stats once
+ *    at character creation (and re-applied as a *diff* on transcend).
+ *  - Class contributes *growth* weights — purely a recommendation to the
+ *    player ("a Berserk should pump STR + VIT"), never auto-applied.
+ *  - class.skill is kept here temporarily until the dedicated Skill table
+ *    slice lands; future slice will move it out entirely. */
+export interface StatModifier {
+  str?: number
+  int?: number
+  dex?: number
+  agi?: number
+  luk?: number
+  vit?: number
+}
+
 export interface Race {
   id: string
   name: string
   emoji: string
-  hp: number
-  mp: number
-  atk: number
-  def: number
-  spd: number
   desc: string
+  /** Flat additions to each primary stat at character creation. Negative
+   *  values are allowed; the resulting stat is clamped to STAT_BASE on
+   *  transcend so a player never sinks below the floor. Missing keys = 0. */
+  modifiers: StatModifier
   /** True when the race is offered at character-creation or in the Lv10
    *  transcend modal. False for deprecated races kept only so old saves
    *  still render (e.g. characters created before the Slice-17 reform). */
@@ -31,10 +46,14 @@ export interface CharClass {
   id: string
   name: string
   emoji: string
-  atk: number
-  def: number
-  spd: number
-  mp: number
+  desc: string
+  /** Recommended stat-allocation weights. UI uses these for "suggested
+   *  build" hints / an auto-allocate button — NEVER applied automatically
+   *  by the server. Total weight has no fixed sum; treat as relative. */
+  growth: StatModifier
+  /** Transitional — the temporary innate skill until the Skill table slice
+   *  lands. Will be removed once skills are unlockable via shop / quest /
+   *  cash item per the design proposal. */
   skill: Skill
 }
 

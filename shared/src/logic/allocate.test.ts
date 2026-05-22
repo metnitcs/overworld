@@ -1,6 +1,9 @@
 import { describe, it, expect } from 'vitest'
 import type { GameState } from '../types'
-import { spendPoints, resetStats } from './allocate'
+import {
+  spendPoints, resetStats,
+  applyRaceModifiers, shiftRaceModifierDiff,
+} from './allocate'
 import { STAT_BASE, STAT_HARD_CAP, STAT_POINTS_PER_LEVEL } from '../data'
 
 function gs(overrides: Partial<GameState> = {}): GameState {
@@ -86,5 +89,68 @@ describe('resetStats', () => {
     const once = resetStats(gs({ lv: 10, str: 30, unspentPoints: 5 }))
     const twice = resetStats(once)
     expect(twice).toEqual(once)
+  })
+})
+
+describe('applyRaceModifiers (Slice 25)', () => {
+  it('adds positive modifiers on top of the current stats', () => {
+    const r = applyRaceModifiers(gs(), { str: +3, vit: +2 })
+    expect(r.str).toBe(STAT_BASE + 3)
+    expect(r.vit).toBe(STAT_BASE + 2)
+    expect(r.int).toBe(STAT_BASE)
+  })
+
+  it('subtracts negative modifiers but clamps to STAT_BASE', () => {
+    // Fresh char with stats at STAT_BASE — negatives would go below 10
+    // but clamp keeps them at 10 (race never pushes below floor).
+    const r = applyRaceModifiers(gs(), { int: -3, luk: -5 })
+    expect(r.int).toBe(STAT_BASE)
+    expect(r.luk).toBe(STAT_BASE)
+  })
+
+  it('subtraction respects existing investment — only clamps when result < STAT_BASE', () => {
+    // Player who already pumped INT to 20: -3 modifier → 17 (above floor)
+    const r = applyRaceModifiers(gs({ int: 20 }), { int: -3 })
+    expect(r.int).toBe(17)
+  })
+
+  it('missing keys are treated as 0 (no change)', () => {
+    const r = applyRaceModifiers(gs(), {})
+    expect(r.str).toBe(STAT_BASE)
+    expect(r.int).toBe(STAT_BASE)
+  })
+})
+
+describe('shiftRaceModifierDiff (Slice 25 — transcend)', () => {
+  it('applies (new - old) modifier as a diff on current stats', () => {
+    // human (modifiers: {}) → mara (str+3, vit+2, int-3, luk-2)
+    // Player at str=15 (invested +5), defaults elsewhere
+    const r = shiftRaceModifierDiff(
+      gs({ str: 15 }),
+      {},                                         // old: human
+      { str: +3, vit: +2, int: -3, luk: -2 },     // new: mara
+    )
+    expect(r.str).toBe(15 + 3)
+    expect(r.vit).toBe(STAT_BASE + 2)
+    expect(r.int).toBe(STAT_BASE)   // 10 - 3 = 7 → clamped to 10
+    expect(r.luk).toBe(STAT_BASE)   // 10 - 2 = 8 → clamped to 10
+    expect(r.dex).toBe(STAT_BASE)
+    expect(r.agi).toBe(STAT_BASE)
+  })
+
+  it('zero net diff (same race) is a no-op', () => {
+    const r = shiftRaceModifierDiff(
+      gs({ str: 25 }),
+      { str: +3 },
+      { str: +3 },
+    )
+    expect(r.str).toBe(25)
+  })
+
+  it('does not mutate the input state', () => {
+    const before = gs({ str: 15 })
+    const snap = JSON.stringify(before)
+    shiftRaceModifierDiff(before, {}, { str: +5 })
+    expect(JSON.stringify(before)).toBe(snap)
   })
 })

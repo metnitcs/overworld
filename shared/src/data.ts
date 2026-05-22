@@ -2,17 +2,43 @@ import type { Race, CharClass, MapDef, ItemDef, Recipe, TileDef, NpcDef } from '
 
 // Slice 17 race reform: starter = มนุษย์ (human). At Lv 10, character can
 // transcend into มาร or เทพ via the race-change quest (see RaceChangeModal).
-// The 4 races marked `available: false` are legacy — kept so older saves
-// don't break, never offered in any picker.
+// Slice 25 redesign: race contributes flat *modifiers* to primary stats,
+// applied once at character creation. Race no longer holds hp/mp/atk/def/spd
+// directly — all combat numbers now derive from primary stats + lv.
+//
+// Modifier budget guideline: net total ≈ 0 (boons offset by banes) so no race
+// is strictly stronger than another. Sum of |values| ≈ 6–10 keeps differences
+// noticeable without being game-defining at low lv.
 export const RACES: Race[] = [
-  { id: 'human', name: 'เผ่ามนุษย์', emoji: '🧑', hp: 100, mp: 80,  atk: 11, def: 9,  spd: 10, desc: 'สมดุลทุกด้าน — เผ่าเริ่มต้นของผู้กล้า',           available: true, starter: true },
-  { id: 'mara',  name: 'เผ่ามาร',     emoji: '😈', hp: 110, mp: 80,  atk: 12, def: 8,  spd: 10, desc: 'พลังโจมตีและ HP สูง — สายลุย',                    available: true },
-  { id: 'god',   name: 'เผ่าเทพ',     emoji: '👑', hp: 95,  mp: 100, atk: 13, def: 8,  spd: 9,  desc: 'พลังเวทย์รุนแรง MP เยอะ — สายเวท',                available: true },
+  { id: 'human', name: 'เผ่ามนุษย์', emoji: '🧑',
+    desc: 'สมดุลทุกด้าน — เผ่าเริ่มต้นของผู้กล้า ไม่มี modifier ใดๆ',
+    modifiers: {},
+    available: true, starter: true },
+  { id: 'mara',  name: 'เผ่ามาร',     emoji: '😈',
+    desc: 'สายลุย/แทงค์ — STR + VIT สูง แลกกับ INT และ LUK',
+    modifiers: { str: +3, vit: +2, int: -3, luk: -2 },
+    available: true },
+  { id: 'god',   name: 'เผ่าเทพ',     emoji: '👑',
+    desc: 'สายเวท — INT และ LUK สูง แลกกับพละกำลังและความอึด',
+    modifiers: { int: +4, luk: +2, str: -2, vit: -2, agi: -2 },
+    available: true },
   // ─── deprecated (kept for backward compatibility with old saves) ────
-  { id: 'angel', name: 'เผ่านางฟ้า',   emoji: '👼', hp: 90,  mp: 120, atk: 10, def: 9,  spd: 11, desc: 'MP เยอะ ฟื้นฟูเก่ง',     available: false },
-  { id: 'beast', name: 'เผ่าสัตว์อสูร', emoji: '🐺', hp: 100, mp: 70,  atk: 11, def: 10, spd: 13, desc: 'รวดเร็ว ป้องกันดี',     available: false },
-  { id: 'yaksa', name: 'เผ่ายักษ์',    emoji: '👺', hp: 130, mp: 60,  atk: 14, def: 12, spd: 7,  desc: 'อึดสุด พลังถึก',         available: false },
-  { id: 'phaya', name: 'เผ่าพญามาร',  emoji: '🦹', hp: 105, mp: 90,  atk: 13, def: 9,  spd: 11, desc: 'สมดุลระดับสูง',          available: false },
+  { id: 'angel', name: 'เผ่านางฟ้า',   emoji: '👼',
+    desc: 'MP เยอะ ฟื้นฟูเก่ง',
+    modifiers: { int: +3, luk: +2, vit: -2, str: -3 },
+    available: false },
+  { id: 'beast', name: 'เผ่าสัตว์อสูร', emoji: '🐺',
+    desc: 'รวดเร็ว ป้องกันดี',
+    modifiers: { agi: +4, vit: +1, int: -3, dex: -2 },
+    available: false },
+  { id: 'yaksa', name: 'เผ่ายักษ์',    emoji: '👺',
+    desc: 'อึดสุด พลังถึก',
+    modifiers: { vit: +5, str: +3, agi: -4, dex: -2, int: -2 },
+    available: false },
+  { id: 'phaya', name: 'เผ่าพญามาร',  emoji: '🦹',
+    desc: 'สมดุลระดับสูง',
+    modifiers: { str: +2, int: +2, agi: +1, vit: -2, luk: -3 },
+    available: false },
 ]
 
 /** Helper for UI: race-change modal + character-create flow show only these. */
@@ -42,13 +68,36 @@ export const BASE_HP = 50
 /** Flat MP floor, before INT and Lv add in. */
 export const BASE_MP = 20
 
+// Slice 25 redesign: class.growth is a *recommendation* — UI uses it to
+// suggest builds or power an "auto-allocate by class" button. The server
+// never applies it automatically. Values are relative weights (typical
+// range 1–4), no fixed sum. The temporary `skill` field stays until the
+// dedicated Skill table slice.
 export const CLASSES: CharClass[] = [
-  { id: 'berserk',    name: 'นักดาบเดือด',          emoji: '⚔️', atk: 6, def: 2, spd: 1, mp: 0,  skill: { name: 'ฟันสายฟ้า',     mp: 10, mult: 2.0, type: 'phys' } },
-  { id: 'gunslinger', name: 'มือปืนเงา',            emoji: '🔫', atk: 5, def: 1, spd: 3, mp: 0,  skill: { name: 'กระสุนเจาะ',     mp: 8,  mult: 1.7, type: 'phys' } },
-  { id: 'assassin',   name: 'อัสซาซิน',             emoji: '🗡️', atk: 5, def: 1, spd: 4, mp: 0,  skill: { name: 'ลอบสังหาร',      mp: 8,  mult: 1.9, type: 'phys' } },
-  { id: 'heavenkn',   name: 'อัศวินสวรรค์',         emoji: '🛡️', atk: 4, def: 4, spd: 1, mp: 0,  skill: { name: 'ฟันศักดิ์สิทธิ์', mp: 10, mult: 1.8, type: 'holy' } },
-  { id: 'musician',   name: 'นักดนตรีศักดิ์สิทธิ์', emoji: '🎵', atk: 3, def: 2, spd: 2, mp: 15, skill: { name: 'บทเพลงสมาน',    mp: 12, mult: 0,   type: 'heal' } },
-  { id: 'shaman',     name: 'ชาแมนเร้นลับ',         emoji: '🔮', atk: 6, def: 1, spd: 2, mp: 10, skill: { name: 'สายฟ้าโบราณ',    mp: 12, mult: 2.2, type: 'magic' } },
+  { id: 'berserk',    name: 'นักดาบเดือด',          emoji: '⚔️',
+    desc: 'นักรบสายลุย — โจมตีหนัก ทนทาน เข้าใกล้',
+    growth: { str: 3, vit: 2, dex: 1 },
+    skill: { name: 'ฟันสายฟ้า',     mp: 10, mult: 2.0, type: 'phys' } },
+  { id: 'gunslinger', name: 'มือปืนเงา',            emoji: '🔫',
+    desc: 'มือปืนระยะไกล — เน้น DEX ให้ยิงแม่น',
+    growth: { dex: 3, agi: 2, luk: 1 },
+    skill: { name: 'กระสุนเจาะ',     mp: 8,  mult: 1.7, type: 'phys' } },
+  { id: 'assassin',   name: 'อัสซาซิน',             emoji: '🗡️',
+    desc: 'นักลอบสังหาร — ไว คริติคัล',
+    growth: { agi: 3, luk: 2, str: 1 },
+    skill: { name: 'ลอบสังหาร',      mp: 8,  mult: 1.9, type: 'phys' } },
+  { id: 'heavenkn',   name: 'อัศวินสวรรค์',         emoji: '🛡️',
+    desc: 'อัศวินทนทาน — เน้น VIT ป้องกัน',
+    growth: { vit: 3, str: 2, dex: 1 },
+    skill: { name: 'ฟันศักดิ์สิทธิ์', mp: 10, mult: 1.8, type: 'holy' } },
+  { id: 'musician',   name: 'นักดนตรีศักดิ์สิทธิ์', emoji: '🎵',
+    desc: 'สาย support — INT สำหรับ MP, DEX สำหรับเล่นโน้ตแม่น',
+    growth: { int: 3, dex: 2, luk: 1 },
+    skill: { name: 'บทเพลงสมาน',    mp: 12, mult: 0,   type: 'heal' } },
+  { id: 'shaman',     name: 'ชาแมนเร้นลับ',         emoji: '🔮',
+    desc: 'สายเวท — INT สูง mAtk แรง',
+    growth: { int: 4, luk: 2 },
+    skill: { name: 'สายฟ้าโบราณ',    mp: 12, mult: 2.2, type: 'magic' } },
 ]
 
 export const ITEMS: Record<string, ItemDef> = {
