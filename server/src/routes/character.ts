@@ -90,6 +90,13 @@ const unequipSchema = z.object({
   slot: z.enum(['weapon', 'armor']),
 })
 
+/** Slice 40: consume intent — server applies the heal clamp + decrements
+ *  inventory atomically so the client can't fake heal amounts or hold a
+ *  potion after using it. */
+const consumeSchema = z.object({
+  itemKey: z.string().min(1),
+})
+
 const DEFAULT_INVENTORY: Record<string, number> = { 'potion-s': 3 }
 
 /** Map a DB Character (+inventory rows) into the API shape, which mirrors the
@@ -671,6 +678,59 @@ export function registerCharacterRoutes(app: FastifyInstance): void {
           where: { characterId_itemKey: { characterId: existing.id, itemKey: cleared } },
           create: { characterId: existing.id, itemKey: cleared, qty: 1 },
           update: { qty: 1 },
+        })
+      }
+      return tx.character.findUniqueOrThrow({
+        where: { id: existing.id }, include: { inventory: true },
+      })
+    })
+    return reply.send({ character: toApiCharacter(updated) })
+  })
+
+  // ─── POST /api/character/:id/consume — Slice 40 intent endpoint ──────────
+  // Server validates type=consume + owned qty ≥ 1, applies the clamped
+  // heal/healMp from the item def, decrements the inventory row in the
+  // same transaction. No-op heal (already full HP/MP) is allowed — the
+  // potion still gets consumed.
+  app.post('/api/character/:id/consume', { preHandler: app.requireAuth }, async (req, reply) => {
+    const parsed = consumeSchema.safeParse(req.body)
+    if (!parsed.success) {
+      return reply.code(400).send({ error: 'invalid input', issues: parsed.error.issues })
+    }
+    const { id } = req.params as { id: string }
+    const { itemKey } = parsed.data
+
+    const existing = await app.prisma.character.findUnique({
+      where: { id }, include: { inventory: true },
+    })
+    if (!existing || existing.userId !== req.userId) {
+      return reply.code(404).send({ error: 'character not found' })
+    }
+    const bundle = await app.contentCache.get()
+    const item = bundle.items[itemKey]
+    if (!item) return reply.code(404).send({ error: 'item not found' })
+    if (item.type !== 'consume') {
+      return reply.code(400).send({ error: 'item is not consumable' })
+    }
+    const row = existing.inventory.find((it) => it.itemKey === itemKey)
+    if (!row || row.qty < 1) return reply.code(409).send({ error: 'item not in inventory' })
+
+    const newHp = item.heal ? Math.min(existing.maxHp, existing.hp + item.heal) : existing.hp
+    const newMp = item.healMp ? Math.min(existing.maxMp, existing.mp + item.healMp) : existing.mp
+
+    const updated = await app.prisma.$transaction(async (tx) => {
+      await tx.character.update({
+        where: { id: existing.id },
+        data: { hp: newHp, mp: newMp },
+      })
+      if (row.qty <= 1) {
+        await tx.inventoryItem.delete({
+          where: { characterId_itemKey: { characterId: existing.id, itemKey } },
+        })
+      } else {
+        await tx.inventoryItem.update({
+          where: { characterId_itemKey: { characterId: existing.id, itemKey } },
+          data: { qty: row.qty - 1 },
         })
       }
       return tx.character.findUniqueOrThrow({

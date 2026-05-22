@@ -1106,17 +1106,33 @@ export const useGame = create<Store>()(
           }
         })()
       },
+      // Slice 40: consume now flows through the server. Heal clamp +
+      // inventory decrement are atomic + cheat-proof.
       useConsume: (key) => {
+        const token = get().token
+        const id = get().activeCharacterId
         const it = get().content?.items[key]
-        if (!it || it.type !== 'consume') return
-        const g = { ...get().game }
-        if (it.heal) g.hp = Math.min(g.maxHp, g.hp + it.heal)
-        if (it.healMp) g.mp = Math.min(g.maxMp, g.mp + it.healMp)
-        g.inventory = { ...g.inventory }
-        g.inventory[key] = (g.inventory[key] || 0) - 1
-        if (g.inventory[key] <= 0) delete g.inventory[key]
-        set({ game: g })
-        get().log(`ใช้ ${it.name}`, 'good')
+        if (!token || !id || !it || it.type !== 'consume') return
+        if ((get().game.inventory[key] || 0) < 1) return
+        void (async () => {
+          setSaveStatus('saving')
+          try {
+            const r = await api.consumeItem(token, id, key)
+            const { id: _, updatedAt, ...gameState } = r.character
+            void _
+            rememberSync(id, updatedAt)
+            const next = deriveStats(gameState, { items: get().content?.items })
+            useGame.setState({ game: next })
+            lastSavedSnapshot = snapshotOf(next)
+            setSaveStatus('saved')
+            get().log(`ใช้ ${it.name}`, 'good')
+          } catch (err) {
+            setSaveStatus('error')
+            const msg = err instanceof ApiError && err.body && typeof err.body === 'object' && 'error' in err.body
+              ? String((err.body as { error: string }).error) : String(err)
+            get().log(`ใช้ไม่ได้: ${msg}`, 'bad')
+          }
+        })()
       },
       addItem: (key, qty = 1) => {
         const g = { ...get().game }

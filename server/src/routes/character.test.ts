@@ -786,6 +786,97 @@ describe('POST /api/character/:id/unequip', () => {
   })
 })
 
+// ─── Slice 40 — consume intent endpoint ───────────────────────────────────
+describe('POST /api/character/:id/consume', () => {
+  async function createCharBelowFullHp(token: string, name: string): Promise<string> {
+    const created = await app.inject({
+      method: 'POST', url: '/api/character', headers: { authorization: `Bearer ${token}` },
+      payload: { name },
+    })
+    const id = (created.json() as { character: { id: string } }).character.id
+    // Damage the character so heal has somewhere to go.
+    await prisma.character.update({ where: { id }, data: { hp: 10, mp: 10 } })
+    return id
+  }
+
+  it('decrements inventory + heals clamped to maxHp', async () => {
+    const token = await registerAndGetToken('test_consume_ok')
+    const id = await createCharBelowFullHp(token, 'C')
+    // Starter inventory has potion-s × 3.
+    const res = await app.inject({
+      method: 'POST', url: `/api/character/${id}/consume`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { itemKey: 'potion-s' },
+    })
+    expect(res.statusCode).toBe(200)
+    const body = res.json() as { character: { hp: number; maxHp: number; inventory: Record<string, number> } }
+    expect(body.character.inventory['potion-s']).toBe(2)
+    expect(body.character.hp).toBeGreaterThan(10)
+    expect(body.character.hp).toBeLessThanOrEqual(body.character.maxHp)
+  })
+
+  it('removes the inventory row when the last unit is consumed', async () => {
+    const token = await registerAndGetToken('test_consume_last')
+    const id = await createCharBelowFullHp(token, 'L')
+    await prisma.inventoryItem.update({
+      where: { characterId_itemKey: { characterId: id, itemKey: 'potion-s' } },
+      data: { qty: 1 },
+    })
+    const res = await app.inject({
+      method: 'POST', url: `/api/character/${id}/consume`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { itemKey: 'potion-s' },
+    })
+    expect(res.statusCode).toBe(200)
+    const body = res.json() as { character: { inventory: Record<string, number> } }
+    expect(body.character.inventory['potion-s']).toBeUndefined()
+  })
+
+  it('rejects consuming an item not in inventory with 409', async () => {
+    const token = await registerAndGetToken('test_consume_none')
+    const created = await app.inject({
+      method: 'POST', url: '/api/character', headers: { authorization: `Bearer ${token}` },
+      payload: { name: 'N' },
+    })
+    const id = (created.json() as { character: { id: string } }).character.id
+    await prisma.inventoryItem.deleteMany({ where: { characterId: id } })
+    const res = await app.inject({
+      method: 'POST', url: `/api/character/${id}/consume`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { itemKey: 'potion-s' },
+    })
+    expect(res.statusCode).toBe(409)
+  })
+
+  it('rejects consuming a non-consume item with 400', async () => {
+    const token = await registerAndGetToken('test_consume_wrong_type')
+    const created = await app.inject({
+      method: 'POST', url: '/api/character', headers: { authorization: `Bearer ${token}` },
+      payload: { name: 'W' },
+    })
+    const id = (created.json() as { character: { id: string } }).character.id
+    await prisma.inventoryItem.create({ data: { characterId: id, itemKey: 'sword-1', qty: 1 } })
+    const res = await app.inject({
+      method: 'POST', url: `/api/character/${id}/consume`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { itemKey: 'sword-1' },
+    })
+    expect(res.statusCode).toBe(400)
+  })
+
+  it("returns 404 when consuming on another user's character", async () => {
+    const tokenA = await registerAndGetToken('test_consume_a')
+    const id = await createCharBelowFullHp(tokenA, 'A')
+    const tokenB = await registerAndGetToken('test_consume_b')
+    const res = await app.inject({
+      method: 'POST', url: `/api/character/${id}/consume`,
+      headers: { authorization: `Bearer ${tokenB}` },
+      payload: { itemKey: 'potion-s' },
+    })
+    expect(res.statusCode).toBe(404)
+  })
+})
+
 describe('DELETE /api/character/:id (Slice 16 slot reclaim)', () => {
   it('removes the character so the slot can be reused', async () => {
     const token = await registerAndGetToken('test_del')

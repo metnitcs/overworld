@@ -400,6 +400,13 @@ export const api = {
       method: 'POST', token, body: { slot },
     }),
 
+  /** Slice 40 — consume an item. Server applies the clamped heal/healMp
+   *  + decrements inventory atomically. */
+  consumeItem: (token: string, id: string, itemKey: string) =>
+    request<CharacterResponse>(`/api/character/${id}/consume`, {
+      method: 'POST', token, body: { itemKey },
+    }),
+
   // ─── Legacy first-char endpoints (kept until full removal) ───
   getCharacter: (token: string) =>
     request<CharacterResponse>('/api/character', { token }),
