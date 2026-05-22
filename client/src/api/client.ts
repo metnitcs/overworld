@@ -268,13 +268,25 @@ export interface AdminLogRow {
   createdAt: string
 }
 
+/** Slice 38: server now decorates every character payload with
+ *  `updatedAt` (ISO). The store mirrors it into `lastSyncAt[characterId]`
+ *  so the next PUT can include `expectedUpdatedAt` for optimistic concurrency. */
+export type CharacterPayload = GameState & { id: string; updatedAt: string }
+
 export interface CharacterResponse {
-  character: GameState & { id: string }
+  character: CharacterPayload
 }
 
 export interface CharactersListResponse {
-  characters: Array<GameState & { id: string }>
+  characters: CharacterPayload[]
   slotLimit: number
+}
+
+/** Slice 38: 409 body returned when the client's PUT carried a stale
+ *  expectedUpdatedAt. `character` is the fresh row. */
+export interface StaleCharacterError {
+  error: 'stale'
+  character: CharacterPayload
 }
 
 /** NPC entry on the wire, with shop stock inlined when applicable. */
@@ -321,8 +333,13 @@ export interface ContentResponse {
 }
 
 /** Fields persisted via PUT — the GameState fields that are mutable in-game
- *  (identity fields name/raceId/classId are set at creation and immutable). */
-export type SaveBody = Omit<GameState, 'name' | 'raceId' | 'classId'>
+ *  (identity fields name/raceId/classId are set at creation and immutable).
+ *  Slice 38: `expectedUpdatedAt` is the optimistic-concurrency token. The
+ *  store passes the value from `lastSyncAt[characterId]` (received in the
+ *  most recent GET/PUT response). Server rejects with 409 on mismatch. */
+export type SaveBody = Omit<GameState, 'name' | 'raceId' | 'classId'> & {
+  expectedUpdatedAt?: string
+}
 
 export const api = {
   register: (username: string, password: string) =>

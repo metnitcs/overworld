@@ -80,7 +80,9 @@ export interface MapInfo {
 }
 
 /** A character row as stored in the client cache (mirror of server response). */
-export type CharacterRow = GameState & { id: string }
+/** Slice 38: `updatedAt` is the server's optimistic-concurrency token —
+ *  echoed back in the next PUT as `expectedUpdatedAt`. */
+export type CharacterRow = GameState & { id: string; updatedAt: string }
 
 interface Store {
   // Persistent game data — mirrors the currently active character
@@ -330,12 +332,59 @@ const AUTH_KEY = 'asura_online_auth_v1'
 
 /** Build the persisted PUT body from the in-memory game state — drops the
  *  identity fields (name/raceId/classId) which are set at creation and
- *  immutable on the server, leaving the mutable slice. */
-function toSaveBody(g: GameState): SaveBody {
+ *  immutable on the server, leaving the mutable slice.
+ *  Slice 38: also attaches `expectedUpdatedAt` from `lastSyncAt` so the
+ *  server can reject stale writes that would clobber concurrent admin/
+ *  other-tab inventory edits. */
+function toSaveBody(g: GameState, expectedUpdatedAt?: string | null): SaveBody {
   // Use a destructure to discard identity fields cleanly.
   const { name: _n, raceId: _r, classId: _c, ...rest } = g
   void _n; void _r; void _c
+  if (expectedUpdatedAt) return { ...rest, expectedUpdatedAt }
   return rest
+}
+
+// ─── Slice 38: optimistic-concurrency token tracking ──────────────────────
+// `lastSyncAt` is the `updatedAt` string we last received from the server
+// for the active character. Every successful GET/POST/PUT character call
+// refreshes it. The autosave/explicit-save paths read it and stuff it into
+// PUT bodies as `expectedUpdatedAt`. A 409 reply means another writer
+// (admin GM-add, second tab) bumped the row between our read and write —
+// we refetch, merge inventory/equip/plus/gold/identity from server, keep
+// our pos/hp/mp/exp/stats, and retry once.
+let lastSyncAt: string | null = null
+let lastSyncForCharId: string | null = null
+function rememberSync(charId: string, updatedAt: string): void {
+  lastSyncForCharId = charId
+  lastSyncAt = updatedAt
+}
+function syncTokenFor(charId: string): string | null {
+  return lastSyncForCharId === charId ? lastSyncAt : null
+}
+function forgetSync(): void {
+  lastSyncAt = null
+  lastSyncForCharId = null
+}
+
+/** Smart merge for 409 (stale) replies. Keeps client's transient gameplay
+ *  state (position, lv/exp/hp/mp, primary stats) but adopts the server's
+ *  inventory/equip/plus/gold + identity — i.e. anything an admin or
+ *  another tab would have written. Slice 45 will strip the adopted fields
+ *  from PUT entirely, making this merge moot for those fields. */
+function mergeAfterStale(client: GameState, server: GameState): GameState {
+  return {
+    ...client,
+    inventory: { ...server.inventory },
+    equipWeapon: server.equipWeapon,
+    equipArmor: server.equipArmor,
+    plus: { ...server.plus },
+    gold: server.gold,
+    name: server.name,
+    raceId: server.raceId,
+    classId: server.classId,
+    transcended: server.transcended,
+    classChanged: server.classChanged,
+  }
 }
 
 export const useGame = create<Store>()(
@@ -447,8 +496,10 @@ export const useGame = create<Store>()(
         const mapInfo = content.maps[found.map]
         if (!mapInfo) throw new Error(`unknown map id: ${found.map}`)
         // Strip the id when copying into `game` (GameState shape excludes id).
-        const { id: _, ...gameState } = found
+        const { id: _, updatedAt, ...gameState } = found
         void _
+        // Slice 38: prime the optimistic-concurrency token for this char.
+        rememberSync(id, updatedAt)
         set({
           activeCharacterId: id,
           game: deriveStats(gameState, { items: get().content?.items }),
@@ -490,8 +541,9 @@ export const useGame = create<Store>()(
         const id = get().activeCharacterId
         if (!token || !id) throw new Error('no active character')
         const r = await api.transcendCharacter(token, id, raceId)
-        const { id: _, ...gameState } = r.character
+        const { id: _, updatedAt, ...gameState } = r.character
         void _
+        rememberSync(id, updatedAt)
         // Recompute derived stats with the new race.
         set({ game: deriveStats(gameState, { items: get().content?.items }) })
         await get().listCharacters()   // refresh roster cache
@@ -503,8 +555,9 @@ export const useGame = create<Store>()(
         const id = get().activeCharacterId
         if (!token || !id) return
         const r = await api.getCharacterById(token, id)
-        const { id: _, ...gameState } = r.character
+        const { id: _, updatedAt, ...gameState } = r.character
         void _
+        rememberSync(id, updatedAt)
         // Recompute derived stats (in case formulas changed in shared
         // logic since the save).
         set({ game: deriveStats(gameState, { items: get().content?.items }) })
@@ -517,8 +570,9 @@ export const useGame = create<Store>()(
         const id = get().activeCharacterId
         if (!token || !id) throw new Error('no active character')
         const r = await api.changeCharacterClass(token, id, classId)
-        const { id: _, ...gameState } = r.character
+        const { id: _, updatedAt, ...gameState } = r.character
         void _
+        rememberSync(id, updatedAt)
         // No stat shift on class change — just rederive in case the new
         // skill's mp cost matters for derived display.
         set({ game: deriveStats(gameState, { items: get().content?.items }) })
@@ -534,7 +588,8 @@ export const useGame = create<Store>()(
         const r = await api.createCharacter(token, { name, classId })
         const g = r.character
         const mapInfo = requireMap(get().content, g.map)
-        const { id, ...gameState } = g
+        const { id, updatedAt, ...gameState } = g
+        rememberSync(id, updatedAt)
         set({
           game: gameState,
           activeCharacterId: id,
@@ -575,10 +630,15 @@ export const useGame = create<Store>()(
           alert('ยังไม่ได้ login หรือยังไม่ได้เลือกตัวละคร')
           return
         }
-        try {
-          await api.saveCharacterById(token, id, toSaveBody(get().game))
+        const r = await putWithStaleRetry(token, id, get().game)
+        if (r.ok) {
+          if (r.gameAfter !== get().game) {
+            set({ game: r.gameAfter })
+            lastSavedSnapshot = snapshotOf(r.gameAfter)
+          }
           get().log('💾 บันทึกเกมสำเร็จ', 'good')
-        } catch (err) {
+        } else {
+          const err = r.err
           const msg = err instanceof ApiError ? `(${err.status})` : ''
           alert(`บันทึกไม่ได้ ${msg}`)
         }
@@ -1115,8 +1175,9 @@ export const useGame = create<Store>()(
         const id = get().activeCharacterId
         if (!token || !id) throw new Error('no active character')
         const r = await api.allocateStat(token, id, stat, amount)
-        const { id: _, ...gameState } = r.character
+        const { id: _, updatedAt, ...gameState } = r.character
         void _
+        rememberSync(id, updatedAt)
         set({ game: deriveStats(gameState, { items: get().content?.items }) })
       },
 
@@ -1125,8 +1186,9 @@ export const useGame = create<Store>()(
         const id = get().activeCharacterId
         if (!token || !id) throw new Error('no active character')
         const r = await api.resetCharacterStats(token, id)
-        const { id: _, ...gameState } = r.character
+        const { id: _, updatedAt, ...gameState } = r.character
         void _
+        rememberSync(id, updatedAt)
         set({ game: deriveStats(gameState, { items: get().content?.items }) })
         get().log('✨ รีเซ็ตสเตตัสแล้ว — กระจาย point ใหม่ได้เลย', 'good')
       },
@@ -1215,6 +1277,38 @@ function snapshotOf(g: GameState): string {
   return JSON.stringify(toSaveBody(g))
 }
 
+/** Slice 38: PUT once with the current sync token. On 409 (stale), adopt
+ *  server's inventory/equip/plus/gold (the admin-owned slice), keep client's
+ *  pos/hp/exp/stats, refresh sync token, and retry once. Returns true on
+ *  success. The caller wires status reporting & snapshot bookkeeping. */
+async function putWithStaleRetry(
+  token: string, charId: string, game: GameState,
+): Promise<{ ok: true; gameAfter: GameState } | { ok: false; err: unknown }> {
+  try {
+    const r = await api.saveCharacterById(token, charId, toSaveBody(game, syncTokenFor(charId)))
+    rememberSync(charId, r.character.updatedAt)
+    return { ok: true, gameAfter: game }
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 409 && err.body
+        && typeof err.body === 'object' && 'character' in err.body) {
+      const server = (err.body as { character: GameState & { id: string; updatedAt: string } }).character
+      const { id: _sid, updatedAt: srvAt, ...srvGame } = server
+      void _sid
+      const merged = mergeAfterStale(game, srvGame)
+      rememberSync(charId, srvAt)
+      console.debug('[autosave] 409 stale — merged + retry', { charId })
+      try {
+        const r2 = await api.saveCharacterById(token, charId, toSaveBody(merged, srvAt))
+        rememberSync(charId, r2.character.updatedAt)
+        return { ok: true, gameAfter: merged }
+      } catch (retryErr) {
+        return { ok: false, err: retryErr }
+      }
+    }
+    return { ok: false, err }
+  }
+}
+
 async function doSave(): Promise<void> {
   const cur = useGame.getState()
   if (!cur.token || !cur.activeCharacterId) return
@@ -1224,12 +1318,20 @@ async function doSave(): Promise<void> {
   console.debug('[autosave] PUT /api/character/:id', {
     id: cur.activeCharacterId, lv: cur.game.lv, map: cur.game.map, px: cur.game.px, py: cur.game.py,
   })
-  try {
-    await api.saveCharacterById(cur.token, cur.activeCharacterId, toSaveBody(cur.game))
-    lastSavedSnapshot = snap
+  const r = await putWithStaleRetry(cur.token, cur.activeCharacterId, cur.game)
+  if (r.ok) {
+    // If a 409-merge changed game, splice it into the store so the UI
+    // reflects the freshly-adopted inventory/equip/plus/gold.
+    if (r.gameAfter !== cur.game) {
+      useGame.setState({ game: r.gameAfter })
+      lastSavedSnapshot = snapshotOf(r.gameAfter)
+      cur.log('🔄 sync ของในกระเป๋ากับ server แล้ว', 'system')
+    } else {
+      lastSavedSnapshot = snap
+    }
     setSaveStatus('saved')
-  } catch (err) {
-    console.error('[autosave] save failed', err)
+  } else {
+    console.error('[autosave] save failed', r.err)
     setSaveStatus('error')
   }
 }
@@ -1242,6 +1344,7 @@ useGame.subscribe(() => {
   if (cur.token !== lastSeenToken) {
     lastSeenToken = cur.token
     lastSavedSnapshot = null
+    forgetSync()
     if (saveTimer) { clearTimeout(saveTimer); saveTimer = null }
     setSaveStatus('idle')
   }
@@ -1292,13 +1395,18 @@ async function persistGameNow(
   // Cancel any pending debounced autosave — we're saving now.
   if (saveTimer) { clearTimeout(saveTimer); saveTimer = null }
   setSaveStatus('saving')
-  try {
-    await api.saveCharacterById(cur.token, cur.activeCharacterId, toSaveBody(cur.game))
-    lastSavedSnapshot = snapshotOf(cur.game)
+  const r = await putWithStaleRetry(cur.token, cur.activeCharacterId, cur.game)
+  if (r.ok) {
+    if (r.gameAfter !== cur.game) {
+      set({ game: r.gameAfter })
+      lastSavedSnapshot = snapshotOf(r.gameAfter)
+      cur.log('🔄 sync ของในกระเป๋ากับ server แล้ว', 'system')
+    } else {
+      lastSavedSnapshot = snapshotOf(cur.game)
+    }
     setSaveStatus('saved')
-    // Tiny confirmation in chat (kind=normal so it doesn't spam log tab).
-    // Note: kept terse so a flurry of equips doesn't drown out battle log.
-  } catch (err) {
+  } else {
+    const err = r.err
     const msg = err instanceof Error ? err.message : String(err)
     console.error('[persistGameNow] save failed, reverting', err)
     set({ game: prev })
@@ -1329,7 +1437,7 @@ export function flushSave(): void {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${cur.token}`,
     },
-    body: JSON.stringify(toSaveBody(cur.game)),
+    body: JSON.stringify(toSaveBody(cur.game, syncTokenFor(cur.activeCharacterId))),
     keepalive: true,
   }).catch(() => { /* tab is unloading; nothing we can do */ })
 }

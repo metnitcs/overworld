@@ -254,6 +254,80 @@ describe('PUT /api/character/:id (Slice 16 by-id save)', () => {
     expect(verified.transcended).toBe(true)
   })
 
+  // Slice 38: optimistic concurrency. expectedUpdatedAt is the row's
+  // `updatedAt` from the client's last read; mismatch ⇒ 409 + current row.
+  it('rejects a stale PUT with 409 + current character when expectedUpdatedAt is older', async () => {
+    const token = await registerAndGetToken('test_stale_put')
+    const created = await app.inject({
+      method: 'POST', url: '/api/character', headers: { authorization: `Bearer ${token}` },
+      payload: { name: 'Sten' },
+    })
+    const c0 = (created.json() as { character: { id: string; updatedAt: string } }).character
+    expect(typeof c0.updatedAt).toBe('string')
+
+    // Simulate an admin/other-tab write that bumped updatedAt + added an
+    // item between the client's read and the client's save.
+    await new Promise((r) => setTimeout(r, 5))
+    await prisma.character.update({
+      where: { id: c0.id },
+      data: { gold: 999 },
+    })
+    await prisma.inventoryItem.create({
+      data: { characterId: c0.id, itemKey: 'sword-1', qty: 1 },
+    })
+
+    const res = await app.inject({
+      method: 'PUT',
+      url: `/api/character/${c0.id}`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: fullSaveBody({ expectedUpdatedAt: c0.updatedAt, gold: 50, inventory: {} }),
+    })
+    expect(res.statusCode).toBe(409)
+    const body = res.json() as { error: string; character: { gold: number; inventory: Record<string, number>; updatedAt: string } }
+    expect(body.error).toBe('stale')
+    // Server hands back the *current* state so the client can merge + retry.
+    expect(body.character.gold).toBe(999)
+    expect(body.character.inventory).toEqual({ 'potion-s': 3, 'sword-1': 1 })
+    expect(body.character.updatedAt).not.toBe(c0.updatedAt)
+  })
+
+  it('accepts a PUT when expectedUpdatedAt matches the row', async () => {
+    const token = await registerAndGetToken('test_fresh_put')
+    const created = await app.inject({
+      method: 'POST', url: '/api/character', headers: { authorization: `Bearer ${token}` },
+      payload: { name: 'Fr' },
+    })
+    const c0 = (created.json() as { character: { id: string; updatedAt: string } }).character
+
+    const res = await app.inject({
+      method: 'PUT',
+      url: `/api/character/${c0.id}`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: fullSaveBody({ expectedUpdatedAt: c0.updatedAt, gold: 250 }),
+    })
+    expect(res.statusCode).toBe(200)
+    const body = res.json() as { character: { gold: number; updatedAt: string } }
+    expect(body.character.gold).toBe(250)
+    // updatedAt advances after a successful write.
+    expect(body.character.updatedAt).not.toBe(c0.updatedAt)
+  })
+
+  it('accepts a PUT that omits expectedUpdatedAt (back-compat for older clients)', async () => {
+    const token = await registerAndGetToken('test_nover_put')
+    const created = await app.inject({
+      method: 'POST', url: '/api/character', headers: { authorization: `Bearer ${token}` },
+      payload: { name: 'Nv' },
+    })
+    const id = (created.json() as { character: { id: string } }).character.id
+    const res = await app.inject({
+      method: 'PUT',
+      url: `/api/character/${id}`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: fullSaveBody({ gold: 77 }), // no expectedUpdatedAt
+    })
+    expect(res.statusCode).toBe(200)
+  })
+
   it("returns 404 when trying to PUT another user's character", async () => {
     const tokenA = await registerAndGetToken('test_user_a')
     const created = await app.inject({

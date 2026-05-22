@@ -59,6 +59,11 @@ const updateSchema = z.object({
   inventory: z.record(z.string(), z.number().int().min(0)),
   transcended: z.boolean(),
   classChanged: z.boolean(),
+  /// Slice 38: optimistic concurrency token. ISO timestamp of the
+  /// character row when the client last read it (from GET or prior PUT).
+  /// Optional for back-compat — clients that omit it skip the staleness
+  /// check entirely (and risk overwriting concurrent admin writes).
+  expectedUpdatedAt: z.string().optional(),
 })
 
 /** POST /api/character/:id/allocate — spend one chunk of points on one stat. */
@@ -78,14 +83,19 @@ const changeClassSchema = z.object({
 const DEFAULT_INVENTORY: Record<string, number> = { 'potion-s': 3 }
 
 /** Map a DB Character (+inventory rows) into the API shape, which mirrors the
- *  client's GameState (inventory = Record<itemKey, qty>). */
+ *  client's GameState (inventory = Record<itemKey, qty>).
+ *  Slice 38: tacks on `updatedAt` (ISO) as the optimistic-concurrency token —
+ *  client echoes it in the next PUT; server rejects mismatches with 409 so a
+ *  player session can't clobber inventory/equip/plus/gold writes that another
+ *  actor (admin GM-add, second tab) made after the last sync. */
 function toApiCharacter(
   c: Character & { inventory: InventoryItem[] },
-): GameState & { id: string } {
+): GameState & { id: string; updatedAt: string } {
   const inv: Record<string, number> = {}
   for (const it of c.inventory) inv[it.itemKey] = it.qty
   return {
     id: c.id,
+    updatedAt: c.updatedAt.toISOString(),
     name: c.name,
     raceId: c.raceId,
     classId: c.classId,
@@ -263,6 +273,20 @@ export function registerCharacterRoutes(app: FastifyInstance): void {
       return reply.code(404).send({ error: 'character not found' })
     }
 
+    // Slice 38: optimistic concurrency. If the client tells us the
+    // `updatedAt` it last read, reject the write when the row has moved
+    // since — and hand back the current character so the client can
+    // refetch + merge + retry instead of clobbering it.
+    if (s.expectedUpdatedAt && existing.updatedAt.toISOString() !== s.expectedUpdatedAt) {
+      const current = await app.prisma.character.findUniqueOrThrow({
+        where: { id: existing.id }, include: { inventory: true },
+      })
+      return reply.code(409).send({
+        error: 'stale',
+        character: toApiCharacter(current),
+      })
+    }
+
     const updated = await app.prisma.$transaction(async (tx) => {
       await tx.character.update({
         where: { id: existing.id },
@@ -310,6 +334,17 @@ export function registerCharacterRoutes(app: FastifyInstance): void {
     const existing = await app.prisma.character.findFirst({ where: { userId: req.userId } })
     if (!existing) {
       return reply.code(404).send({ error: 'no character for this user' })
+    }
+
+    // Slice 38: same optimistic concurrency as the by-id PUT.
+    if (s.expectedUpdatedAt && existing.updatedAt.toISOString() !== s.expectedUpdatedAt) {
+      const current = await app.prisma.character.findUniqueOrThrow({
+        where: { id: existing.id }, include: { inventory: true },
+      })
+      return reply.code(409).send({
+        error: 'stale',
+        character: toApiCharacter(current),
+      })
     }
 
     const updated = await app.prisma.$transaction(async (tx) => {
