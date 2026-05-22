@@ -285,6 +285,12 @@ export const api = {
       method: 'POST', token, body: { raceId },
     }),
 
+  /** Slice 26 class change at Lv 5. Server validates lv + AVAILABLE_CLASSES. */
+  changeCharacterClass: (token: string, id: string, classId: string) =>
+    request<CharacterResponse>(`/api/character/${id}/change-class`, {
+      method: 'POST', token, body: { classId },
+    }),
+
   /** Slice 23 — spend stat points on one primary stat. */
   allocateStat: (token: string, id: string, stat: string, amount: number) =>
     request<CharacterResponse>(`/api/character/${id}/allocate`, {

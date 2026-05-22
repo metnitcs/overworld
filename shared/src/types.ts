@@ -55,6 +55,13 @@ export interface CharClass {
    *  lands. Will be removed once skills are unlockable via shop / quest /
    *  cash item per the design proposal. */
   skill: Skill
+  /** Slice 26: true for the auto-assigned beginner class every character
+   *  starts as. Exactly ONE class should carry this flag (currently
+   *  'adventurer'). */
+  starter?: boolean
+  /** Slice 26: false = legacy class, kept so old saves still render but
+   *  never offered in the ClassChoiceModal. Default treated as true. */
+  available?: boolean
 }
 
 export type MonsterRank = 'normal' | 'elite' | 'boss'
@@ -255,6 +262,10 @@ export interface GameState {
   /** True once the player has completed the Lv 10 race-change quest. Used
    *  to gate the modal so it only fires once. New characters start false. */
   transcended: boolean
+  /** Slice 26: true once the player has completed the Lv 5 class-change
+   *  quest. Mirrors `transcended` lifecycle — new chars start as
+   *  STARTER_CLASS with this flag false; the modal pops once at threshold. */
+  classChanged: boolean
 }
 
 export interface BattleEnemy {
@@ -300,6 +311,7 @@ export type ModalType =
   | 'help'
   | 'race-change'        // Slice 17: Lv 10 transcend choice
   | 'status'             // Slice 23: primary-stat allocation modal
+  | 'class-choice'       // Slice 26: Lv 5 class-change quest
 
 export type ChatKind = 'normal' | 'system' | 'good' | 'bad'
 

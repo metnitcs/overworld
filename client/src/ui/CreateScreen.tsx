@@ -1,17 +1,17 @@
 import { useState } from 'react'
 import { useGame } from '../game/store'
 import {
-  CLASSES, STARTER_RACE, TRANSCEND_LV,
+  STARTER_RACE, STARTER_CLASS, TRANSCEND_LV, CLASS_CHANGE_LV,
   STAT_BASE, BASE_HP, BASE_MP,
-  type PrimaryStat, type StatModifier,
 } from '@asura/shared'
 
-// Slice 17: race is auto-set to STARTER_RACE (มนุษย์) at creation. The Lv10
-// race-change quest is where the player picks มนุษย์/มาร/เทพ. Create flow
-// now only asks for class + name.
+// Slice 17: race is auto-set to STARTER_RACE at creation.
+// Slice 26: class ALSO auto-set to STARTER_CLASS ('Adventurer'). The Lv 5
+// class-change quest is where the player picks the advanced class; the
+// Lv 10 race-change quest is where they pick the advanced race. Create
+// flow now only asks for a NAME.
 
 export function CreateScreen() {
-  const [classId, setClassId] = useState(CLASSES[0].id)
   const [name, setName] = useState('')
   const newCharacter = useGame(s => s.newCharacter)
   const setScreen = useGame(s => s.setScreen)
@@ -19,13 +19,13 @@ export function CreateScreen() {
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<string | null>(null)
 
-  const selectedClass = CLASSES.find(c => c.id === classId)!
-
   async function confirm() {
     setBusy(true)
     setErr(null)
     try {
-      await newCharacter(name.trim() || 'นักผจญภัย', classId)
+      // classId arg is ignored server-side now (Slice 26); pass STARTER_CLASS
+      // for clarity. Server forces STARTER_RACE + STARTER_CLASS anyway.
+      await newCharacter(name.trim() || 'นักผจญภัย', STARTER_CLASS.id)
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'สร้างไม่สำเร็จ')
     } finally {
@@ -39,54 +39,52 @@ export function CreateScreen() {
         <div>
           <h1>สร้างตัวละครใหม่</h1>
           <div className="sub" style={{ color: 'var(--muted)', fontSize: 13, marginTop: 2 }}>
-            ทุกตัวเริ่มต้นเป็น <b>{STARTER_RACE.name}</b> {STARTER_RACE.emoji} —
-            ถึง Lv {TRANSCEND_LV} จะได้ทำเควสเปลี่ยนเผ่าเป็น <b>มาร</b> หรือ <b>เทพ</b>
+            ทุกตัวเริ่มต้นเป็น <b>{STARTER_RACE.name}</b> {STARTER_RACE.emoji} +
+            อาชีพ <b>{STARTER_CLASS.name}</b> {STARTER_CLASS.emoji}
+            <br />
+            <span style={{ fontSize: 11 }}>
+              • Lv {CLASS_CHANGE_LV} → เควสเลือกอาชีพ (Berserk / Gunslinger / Assassin / Heaven Knight / Musician / Shaman)
+              <br />
+              • Lv {TRANSCEND_LV} → เควสเปลี่ยนเผ่า (มาร / เทพ)
+            </span>
           </div>
         </div>
         <div className="hero-eyebrow">เซิร์ฟเวอร์ ซากุระ</div>
       </div>
 
       <div className="create-body">
-        {/* Preview — Slice 25: race modifier folded into Lv1 primary stats */}
+        {/* Preview */}
         <aside className="preview-card">
           <div className="preview-art">
             {STARTER_RACE.emoji}
           </div>
           <div className="preview-name">{STARTER_RACE.name}</div>
-          <div className="preview-sub">{selectedClass.emoji} {selectedClass.name}</div>
-          {/* Starter race is human → modifiers={} so all primary stats = STAT_BASE */}
+          <div className="preview-sub">{STARTER_CLASS.emoji} {STARTER_CLASS.name}</div>
+          {/* All starter chars share the same Lv1 numbers (race modifiers={} + STAT_BASE) */}
           <div className="preview-stats">
             <div className="stat"><span className="k">HP</span><span className="v">{BASE_HP + STAT_BASE * 10}</span></div>
             <div className="stat"><span className="k">MP</span><span className="v">{BASE_MP + STAT_BASE * 3}</span></div>
             <div className="stat"><span className="k">pATK</span><span className="v">{STAT_BASE * 2}</span></div>
             <div className="stat"><span className="k">mATK</span><span className="v">{STAT_BASE * 2}</span></div>
             <div className="stat"><span className="k">pDEF</span><span className="v">{Math.floor(STAT_BASE * 0.5)}</span></div>
-            <div className="stat"><span className="k">สกิล</span><span className="v" style={{ fontSize: 12 }}>{selectedClass.skill.name}</span></div>
+            <div className="stat"><span className="k">สกิล</span><span className="v" style={{ fontSize: 12 }}>{STARTER_CLASS.skill.name}</span></div>
           </div>
           <div style={{ fontSize: 11, marginTop: 8, color: 'var(--muted)', lineHeight: 1.5 }}>
-            ทุกตัวเริ่ม STR/INT/DEX/AGI/LUK/VIT = <b>{STAT_BASE}</b> เท่ากัน
+            ทุก stat เริ่ม <b>{STAT_BASE}</b> เท่ากัน
             <br />Lv up = +5 points ให้กระจายเอง
           </div>
         </aside>
 
-        {/* Class picker — Slice 25: show growth recommendation instead of legacy atk/def offsets */}
+        {/* No class picker anymore — class is auto + changes via Lv5 quest */}
         <section className="picker-card" style={{ gridColumn: 'span 2' }}>
-          <div className="picker-head">เลือกอาชีพ</div>
-          <div className="picker-list">
-            {CLASSES.map(c => (
-              <div
-                key={c.id}
-                className={`pick-row ${classId === c.id ? 'selected' : ''}`}
-                onClick={() => setClassId(c.id)}
-              >
-                <div className="emoji">{c.emoji}</div>
-                <div className="info">
-                  <div className="nm">{c.name}</div>
-                  <div className="ds">{c.desc}</div>
-                  <ClassGrowthHint growth={c.growth} skillName={c.skill.name} />
-                </div>
-              </div>
-            ))}
+          <div className="picker-head">📜 บทเริ่มต้น</div>
+          <div style={{ padding: 12, fontSize: 13, lineHeight: 1.7, color: 'var(--muted)' }}>
+            ทุกการผจญภัยเริ่มจากศูนย์ คุณคือ <b>{STARTER_CLASS.name}</b> {STARTER_CLASS.emoji}
+            สมาชิกใหม่ของหมู่บ้าน — ไม่มีพรสวรรค์พิเศษ ไม่มีตำแหน่งสำคัญ
+            เพียงสกิลพื้นฐาน <b>{STARTER_CLASS.skill.name}</b> และความตั้งใจที่จะเติบโต
+            <br /><br />
+            ออกล่ามอนสเตอร์ในแมพข้างหมู่บ้านเก็บ EXP ถึง Lv {CLASS_CHANGE_LV}
+            แล้วเลือกเส้นทางอาชีพที่เหมาะกับวิธีเล่นของคุณ ทุกการตัดสินใจจะติดตัวคุณตลอด
           </div>
         </section>
       </div>
@@ -116,31 +114,6 @@ export function CreateScreen() {
           {busy ? 'กำลังสร้าง…' : 'ยืนยัน เริ่มผจญภัย'} <span className="arrow">→</span>
         </button>
       </div>
-    </div>
-  )
-}
-
-/** Slice 25 hint: list which stats this class's growth weights prefer.
- *  Purely advisory — does NOT auto-allocate. Helps newcomers know what to
- *  pump when they get their first level-up points. */
-const STAT_LABEL: Record<PrimaryStat, string> = {
-  str: 'STR', int: 'INT', dex: 'DEX', agi: 'AGI', luk: 'LUK', vit: 'VIT',
-}
-const STATS_ORDER: PrimaryStat[] = ['str', 'int', 'dex', 'agi', 'luk', 'vit']
-function ClassGrowthHint({
-  growth, skillName,
-}: { growth: StatModifier; skillName: string }) {
-  // Sort by weight desc so the biggest recommendations show first.
-  const rec = STATS_ORDER
-    .map((k) => [k, growth[k] ?? 0] as const)
-    .filter(([, v]) => v > 0)
-    .sort((a, b) => b[1] - a[1])
-  return (
-    <div style={{ fontSize: 10, color: 'var(--muted-2)', marginTop: 2 }}>
-      สกิล: <b>{skillName}</b>
-      {rec.length > 0 && (
-        <> · แนะนำเทใส่: {rec.map(([k, v]) => `${STAT_LABEL[k]}×${v}`).join(' / ')}</>
-      )}
     </div>
   )
 }

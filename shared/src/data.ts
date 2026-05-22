@@ -73,7 +73,16 @@ export const BASE_MP = 20
 // never applies it automatically. Values are relative weights (typical
 // range 1–4), no fixed sum. The temporary `skill` field stays until the
 // dedicated Skill table slice.
+//
+// Slice 26: 'adventurer' is the new starter class. Every fresh character
+// begins as Adventurer; at CLASS_CHANGE_LV the player picks one of the six
+// advanced classes via the ClassChoiceModal.
 export const CLASSES: CharClass[] = [
+  { id: 'adventurer', name: 'นักผจญภัย',           emoji: '🎒',
+    desc: 'มือใหม่ — สมดุลทุกด้าน รอเปลี่ยนคลาสที่ Lv 5',
+    growth: { str: 1, dex: 1, vit: 1 },
+    skill: { name: 'ฟันธรรมดา',      mp: 0,  mult: 1.2, type: 'phys' },
+    starter: true },
   { id: 'berserk',    name: 'นักดาบเดือด',          emoji: '⚔️',
     desc: 'นักรบสายลุย — โจมตีหนัก ทนทาน เข้าใกล้',
     growth: { str: 3, vit: 2, dex: 1 },
@@ -99,6 +108,16 @@ export const CLASSES: CharClass[] = [
     growth: { int: 4, luk: 2 },
     skill: { name: 'สายฟ้าโบราณ',    mp: 12, mult: 2.2, type: 'magic' } },
 ]
+
+/** Slice 26: classes offered in the ClassChoiceModal (excludes the starter
+ *  class itself + any future deprecated entries with available:false). */
+export const AVAILABLE_CLASSES: CharClass[] = CLASSES.filter(
+  (c) => !c.starter && (c.available ?? true),
+)
+/** The starter class assigned at character creation (Slice 26). */
+export const STARTER_CLASS = CLASSES.find((c) => c.starter)!
+/** Lv at which the class-change quest unlocks (mirrors TRANSCEND_LV pattern). */
+export const CLASS_CHANGE_LV = 5
 
 export const ITEMS: Record<string, ItemDef> = {
   // Materials

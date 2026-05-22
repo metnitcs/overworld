@@ -20,7 +20,7 @@ import {
   deriveStats, applyExp, scaleEnemy, rollLoot, resolveEnhance, rollSpawns,
   rollEncounter,
   findPath, type PathStep,
-  TRANSCEND_LV,
+  TRANSCEND_LV, CLASS_CHANGE_LV,
 } from '@asura/shared'
 import { api, ApiError, type SaveBody } from '../api/client'
 
@@ -142,6 +142,8 @@ interface Store {
   removeCharacter: (id: string) => Promise<void>
   /** Slice 17: Lv 10 race-change quest resolution. */
   transcend: (raceId: string) => Promise<void>
+  /** Slice 26: Lv 5 class-change quest resolution. */
+  classChange: (classId: string) => Promise<void>
   // Game lifecycle (server-backed; names preserved so existing UI keeps compiling)
   /** Create a new character at the starter race (Slice 17). After creation,
    *  the character is auto-selected and the screen jumps to 'game'. */
@@ -224,6 +226,7 @@ const initialGame: GameState = {
   px: 5, py: 5,
   steps: 0,
   transcended: false,
+  classChanged: false,
 }
 
 let chatIdSeq = 1
@@ -471,6 +474,21 @@ export const useGame = create<Store>()(
         get().log(`✨ เปลี่ยนเผ่าเป็น ${raceId}!`, 'good')
       },
 
+      classChange: async (classId) => {
+        const token = get().token
+        const id = get().activeCharacterId
+        if (!token || !id) throw new Error('no active character')
+        const r = await api.changeCharacterClass(token, id, classId)
+        const { id: _, ...gameState } = r.character
+        void _
+        // No stat shift on class change — just rederive in case the new
+        // skill's mp cost matters for derived display.
+        set({ game: deriveStats(gameState) })
+        await get().listCharacters()
+        const cls = CLASSES.find((c) => c.id === classId)
+        get().log(`🎯 เปลี่ยนคลาสเป็น ${cls?.name ?? classId}!`, 'good')
+      },
+
       newCharacter: async (name, classId) => {
         const token = get().token
         if (!token) throw new Error('not authenticated')
@@ -624,9 +642,22 @@ export const useGame = create<Store>()(
         }
         set({ game: g })
 
+        // Slice 26: Lv 5 class-change quest fires FIRST (lower threshold).
+        // Only one modal at a time — class change has priority since it
+        // unlocks first; race change waits its turn at Lv 10.
+        if (
+          cur.lv < CLASS_CHANGE_LV &&
+          g.lv >= CLASS_CHANGE_LV &&
+          !g.classChanged &&
+          get().modal === 'none' &&
+          get().screen === 'game'
+        ) {
+          get().log(`🎯 ได้เวลาเลือกอาชีพแล้ว! เลือกคลาสเฉพาะทาง`, 'good')
+          set({ modal: 'class-choice' })
+        }
         // Slice 17: Lv 10 race-change quest. Fires the modal exactly once,
         // when the player crosses the threshold for the first time.
-        if (
+        else if (
           cur.lv < TRANSCEND_LV &&
           g.lv >= TRANSCEND_LV &&
           !g.transcended &&

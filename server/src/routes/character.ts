@@ -4,6 +4,7 @@ import type { Character, InventoryItem } from '@prisma/client'
 import {
   deriveStats, type GameState,
   STARTER_RACE, AVAILABLE_RACES, RACES, CHARACTER_SLOT_LIMIT, TRANSCEND_LV,
+  STARTER_CLASS, AVAILABLE_CLASSES, CLASS_CHANGE_LV,
   STAT_BASE, STAT_HARD_CAP,
   spendPoints, resetStats,
   applyRaceModifiers, shiftRaceModifierDiff,
@@ -12,10 +13,11 @@ import {
 
 const createSchema = z.object({
   name: z.string().min(1).max(40),
-  classId: z.string(),
-  // raceId is no longer client-supplied at creation (Slice 17): every new
-  // character starts as the configured starter race. Accept it for backward
-  // compat but ignore.
+  // Slice 26: classId is no longer client-supplied at creation (was Slice 17
+  // for raceId — same pattern now applied to class). Every new character
+  // starts as STARTER_CLASS and chooses an advanced class via the Lv-5
+  // class-change quest. Accepted for backward compat but ignored.
+  classId: z.string().optional(),
   raceId: z.string().optional(),
 })
 
@@ -52,6 +54,7 @@ const updateSchema = z.object({
   plus: z.record(z.string(), z.number().int().min(0)),
   inventory: z.record(z.string(), z.number().int().min(0)),
   transcended: z.boolean(),
+  classChanged: z.boolean(),
 })
 
 /** POST /api/character/:id/allocate — spend one chunk of points on one stat. */
@@ -62,6 +65,10 @@ const allocateSchema = z.object({
 
 const transcendSchema = z.object({
   raceId: z.string(),
+})
+
+const changeClassSchema = z.object({
+  classId: z.string(),
 })
 
 const DEFAULT_INVENTORY: Record<string, number> = { 'potion-s': 3 }
@@ -105,6 +112,7 @@ function toApiCharacter(
     py: c.py,
     steps: c.steps,
     transcended: c.transcended,
+    classChanged: c.classChanged,
   }
 }
 
@@ -149,14 +157,16 @@ export function registerCharacterRoutes(app: FastifyInstance): void {
     return reply.send({ character: toApiCharacter(character) })
   })
 
-  // ─── POST /api/character — create. Race is ALWAYS the configured starter ───
-  // (Slice 17). Enforces the per-account slot cap (Slice 16).
+  // ─── POST /api/character — create. Race AND Class are ALWAYS the ─────────
+  // configured starters (Slice 17 race, Slice 26 class). Enforces the
+  // per-account slot cap (Slice 16). Client may send `classId` for backward
+  // compat — it's ignored.
   app.post('/api/character', { preHandler: app.requireAuth }, async (req, reply) => {
     const parsed = createSchema.safeParse(req.body)
     if (!parsed.success) {
       return reply.code(400).send({ error: 'invalid input', issues: parsed.error.issues })
     }
-    const { name, classId } = parsed.data
+    const { name } = parsed.data
 
     const count = await app.prisma.character.count({ where: { userId: req.userId } })
     if (count >= CHARACTER_SLOT_LIMIT) {
@@ -165,16 +175,13 @@ export function registerCharacterRoutes(app: FastifyInstance): void {
       })
     }
 
-    // Derive initial stats via the shared rules — starter race is fixed.
-    // Slice 23: new chars start with STAT_BASE in every primary stat and
-    // 0 unspent points (Lv 1 has no level-up bonus yet).
-    // Slice 25: apply the starter race's stat modifiers on top of the base
-    // pool so racial flavor lands at creation. Subsequent Lv ups grant
-    // unspentPoints that the player allocates manually.
+    // Derive initial stats via the shared rules — starter race + class are
+    // both fixed. Slice 23: STAT_BASE in every primary stat, 0 unspent.
+    // Slice 25: apply starter race modifier. Slice 26: classId = STARTER_CLASS.
     const baseState: GameState = {
       name,
       raceId: STARTER_RACE.id,
-      classId,
+      classId: STARTER_CLASS.id,
       lv: 1, exp: 0,
       hp: 0, maxHp: 0, mp: 0, maxMp: 0,
       atk: 0, def: 0, spd: 0,
@@ -188,6 +195,7 @@ export function registerCharacterRoutes(app: FastifyInstance): void {
       plus: {},
       map: 'village', px: 5, py: 5, steps: 0,
       transcended: false,
+      classChanged: false,
     }
     const withRace = applyRaceModifiers(baseState, STARTER_RACE.modifiers)
     const derived = deriveStats(withRace)
@@ -223,6 +231,7 @@ export function registerCharacterRoutes(app: FastifyInstance): void {
         equipArmor: null,
         plus: {},
         transcended: false,
+        classChanged: false,
         inventory: {
           create: Object.entries(DEFAULT_INVENTORY).map(([itemKey, qty]) => ({ itemKey, qty })),
         },
@@ -262,6 +271,7 @@ export function registerCharacterRoutes(app: FastifyInstance): void {
           equipWeapon: s.equipWeapon, equipArmor: s.equipArmor,
           plus: s.plus,
           transcended: s.transcended,
+          classChanged: s.classChanged,
         },
       })
       await tx.inventoryItem.deleteMany({ where: { characterId: existing.id } })
@@ -310,6 +320,7 @@ export function registerCharacterRoutes(app: FastifyInstance): void {
           equipWeapon: s.equipWeapon, equipArmor: s.equipArmor,
           plus: s.plus,
           transcended: s.transcended,
+          classChanged: s.classChanged,
         },
       })
       await tx.inventoryItem.deleteMany({ where: { characterId: existing.id } })
@@ -428,6 +439,44 @@ export function registerCharacterRoutes(app: FastifyInstance): void {
         maxHp: next.maxHp, maxMp: next.maxMp,
         atk: next.atk, def: next.def, spd: next.spd,
       },
+      include: { inventory: true },
+    })
+    return reply.send({ character: toApiCharacter(updated) })
+  })
+
+  // ─── POST /api/character/:id/change-class — Lv 5 class-change quest ──────
+  // Mirror of /transcend (Slice 17 race) — Slice 26 starter-class flow.
+  // Validates: lv >= CLASS_CHANGE_LV, not yet class-changed, classId in
+  // AVAILABLE_CLASSES. Flips classId + classChanged=true. Does NOT touch
+  // primary stats — the player has already invested by this point.
+  app.post('/api/character/:id/change-class', { preHandler: app.requireAuth }, async (req, reply) => {
+    const parsed = changeClassSchema.safeParse(req.body)
+    if (!parsed.success) {
+      return reply.code(400).send({ error: 'invalid input', issues: parsed.error.issues })
+    }
+    const { id } = req.params as { id: string }
+    const { classId } = parsed.data
+
+    if (!AVAILABLE_CLASSES.some((c) => c.id === classId)) {
+      return reply.code(400).send({ error: 'classId not allowed' })
+    }
+
+    const existing = await app.prisma.character.findUnique({
+      where: { id }, include: { inventory: true },
+    })
+    if (!existing || existing.userId !== req.userId) {
+      return reply.code(404).send({ error: 'character not found' })
+    }
+    if (existing.classChanged) {
+      return reply.code(409).send({ error: 'character already class-changed' })
+    }
+    if (existing.lv < CLASS_CHANGE_LV) {
+      return reply.code(409).send({ error: `must be Lv ${CLASS_CHANGE_LV}+ to change class` })
+    }
+
+    const updated = await app.prisma.character.update({
+      where: { id: existing.id },
+      data: { classId, classChanged: true },
       include: { inventory: true },
     })
     return reply.send({ character: toApiCharacter(updated) })

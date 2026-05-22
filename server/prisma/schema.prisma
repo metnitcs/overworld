@@ -63,6 +63,11 @@ model Character {
   /// Slice 17: true after the Lv 10 race-change quest has resolved. Gates
   /// the RaceChangeModal so it fires exactly once.
   transcended Boolean         @default(false)
+  /// Slice 26: true after the Lv 5 class-change quest has resolved.
+  /// New characters start as STARTER_CLASS ('adventurer') and pick a real
+  /// advanced class via the ClassChoiceModal at threshold lv. Mirrors the
+  /// `transcended` flag's once-per-character lifecycle.
+  classChanged Boolean        @default(false)
   inventory   InventoryItem[]
   battleLogs  BattleLog[]
   updatedAt   DateTime        @updatedAt

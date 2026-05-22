@@ -39,19 +39,21 @@ function fullSaveBody(overrides: Partial<Record<string, unknown>> = {}) {
     equipWeapon: null, equipArmor: null,
     plus: {}, inventory: {},
     transcended: false,
+    classChanged: true,
     ...overrides,
   }
 }
 
 describe('POST /api/character', () => {
-  it('creates a character at the starter race regardless of payload (Slice 17)', async () => {
+  it('creates a character at the starter race + class regardless of payload (Slice 17 + 26)', async () => {
     const token = await registerAndGetToken('test_alice')
 
     const res = await app.inject({
       method: 'POST',
       url: '/api/character',
       headers: { authorization: `Bearer ${token}` },
-      // raceId in the payload is ignored — server always picks STARTER_RACE.
+      // raceId AND classId in payload are ignored — server always picks
+      // STARTER_RACE (Slice 17) + STARTER_CLASS (Slice 26).
       payload: { name: 'Alice', raceId: 'mara', classId: 'berserk' },
     })
 
@@ -59,12 +61,13 @@ describe('POST /api/character', () => {
     const body = res.json() as { character: Record<string, unknown> }
     expect(body.character).toMatchObject({
       name: 'Alice',
-      raceId: STARTER_RACE.id,    // = 'human'
-      classId: 'berserk',
+      raceId: STARTER_RACE.id,        // = 'human'
+      classId: 'adventurer',          // = STARTER_CLASS.id, NOT 'berserk'
       lv: 1, exp: 0, gold: 100,
       map: 'village', px: 5, py: 5, steps: 0,
       equipWeapon: null, equipArmor: null,
       transcended: false,
+      classChanged: false,
     })
     expect(body.character).toMatchObject({ inventory: { 'potion-s': 3 } })
   })
@@ -238,7 +241,9 @@ describe('PUT /api/character/:id (Slice 16 by-id save)', () => {
     const body = res.json() as { character: Record<string, unknown> }
     expect(body.character).toMatchObject({
       ...update,
-      name: 'Gina', raceId: STARTER_RACE.id, classId: 'assassin',
+      // Slice 26: classId is always STARTER_CLASS (= 'adventurer') after
+      // creation. The `assassin` in the POST payload is ignored.
+      name: 'Gina', raceId: STARTER_RACE.id, classId: 'adventurer',
     })
 
     const verify = await app.inject({
@@ -380,6 +385,84 @@ describe('POST /api/character/:id/transcend (Slice 17 race-change)', () => {
       method: 'POST', url: `/api/character/${id}/transcend`,
       headers: { authorization: `Bearer ${token}` },
       payload: { raceId: 'angel' },   // legacy, marked available=false
+    })
+    expect(res.statusCode).toBe(400)
+  })
+})
+
+describe('POST /api/character/:id/change-class (Slice 26 starter-class flow)', () => {
+  async function makeFreshCharAtLv(token: string, name: string, lv: number) {
+    const created = await app.inject({
+      method: 'POST', url: '/api/character', headers: { authorization: `Bearer ${token}` },
+      payload: { name },
+    })
+    const id = (created.json() as { character: { id: string } }).character.id
+    if (lv > 1) {
+      // PUT with classChanged: false so the test exercises the "not yet
+      // class-changed" path (fixture defaults to classChanged: true).
+      await app.inject({
+        method: 'PUT', url: `/api/character/${id}`, headers: { authorization: `Bearer ${token}` },
+        payload: fullSaveBody({ lv, classChanged: false }),
+      })
+    }
+    return id
+  }
+
+  it('flips classId + classChanged=true at the threshold lv', async () => {
+    const token = await registerAndGetToken('test_cc_ok')
+    const id = await makeFreshCharAtLv(token, 'CC', 5)
+    const res = await app.inject({
+      method: 'POST', url: `/api/character/${id}/change-class`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { classId: 'shaman' },
+    })
+    expect(res.statusCode).toBe(200)
+    const body = res.json() as { character: { classId: string; classChanged: boolean } }
+    expect(body.character.classId).toBe('shaman')
+    expect(body.character.classChanged).toBe(true)
+  })
+
+  it('rejects below-threshold lv', async () => {
+    const token = await registerAndGetToken('test_cc_under')
+    // Lv 1 starter character — fixture sets classChanged TRUE on creation
+    // via the POST, but for THIS test we need it false. Easiest: POST then
+    // PUT with classChanged:false + lv:1.
+    const created = await app.inject({
+      method: 'POST', url: '/api/character', headers: { authorization: `Bearer ${token}` },
+      payload: { name: 'Young' },
+    })
+    const id = (created.json() as { character: { id: string } }).character.id
+    const res = await app.inject({
+      method: 'POST', url: `/api/character/${id}/change-class`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { classId: 'berserk' },
+    })
+    expect(res.statusCode).toBe(409)
+  })
+
+  it('rejects a second change-class attempt', async () => {
+    const token = await registerAndGetToken('test_cc_twice')
+    const id = await makeFreshCharAtLv(token, 'Twice', 5)
+    await app.inject({
+      method: 'POST', url: `/api/character/${id}/change-class`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { classId: 'berserk' },
+    })
+    const second = await app.inject({
+      method: 'POST', url: `/api/character/${id}/change-class`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { classId: 'shaman' },
+    })
+    expect(second.statusCode).toBe(409)
+  })
+
+  it('rejects starter class as the picked class (must be an advanced class)', async () => {
+    const token = await registerAndGetToken('test_cc_bad')
+    const id = await makeFreshCharAtLv(token, 'Bad', 5)
+    const res = await app.inject({
+      method: 'POST', url: `/api/character/${id}/change-class`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { classId: 'adventurer' },  // not in AVAILABLE_CLASSES
     })
     expect(res.statusCode).toBe(400)
   })
