@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import type { Screen } from '@asura/shared'
 import { useGame, flushSave } from './game/store'
 import { ApiError } from './api/client'
 import { AuthScreen } from './ui/AuthScreen'
@@ -88,17 +89,23 @@ export default function App() {
     }
   }, [])
 
-  // Resume an authenticated session after a reload (Slice 16). Persist
-  // hydrated the token; we route by character count:
+  // Resume an authenticated session after a reload.
   //   401  → logout (token expired)
-  //   0    → create screen
-  //   1+   → character-select screen (player picks which char to play)
+  //   0 chars → create screen
+  //   1+ → restore the persisted screen (admin/game/character-select)
+  // Slice 34: runs ONCE per mount via resumedRef so the persisted screen
+  // (which arrives via zustand partialize) can be a non-auth value
+  // without skipping setup.
+  const resumedRef = useRef(false)
   useEffect(() => {
     if (!content) return
+    if (resumedRef.current) return
     const st = useGame.getState()
-    if (!st.token || st.screen !== 'auth') return
-    // Hydrate role first (cheap GET), then list characters. If /api/me 401s we
-    // logout; otherwise we route by character count.
+    if (!st.token) return
+    resumedRef.current = true
+    // Capture the user's last screen BEFORE listCharacters / selectCharacter
+    // can mutate it.
+    const lastScreen: Screen = st.screen
     api.me(st.token)
       .then((meRes) => {
         useGame.setState({ role: meRes.user.role })
@@ -111,12 +118,21 @@ export default function App() {
           useGame.setState({ screen: 'create', hasSave: false })
           return
         }
-        // Slice 32: if the persisted activeCharacterId is still owned by
-        // this account, resume DIRECTLY into the game (skip the picker).
-        // Otherwise fall back to the character-select screen.
         const lastId = fresh.activeCharacterId
         const lastChar = lastId ? fresh.characters.find((c) => c.id === lastId) : undefined
-        if (lastChar) {
+
+        // Slice 34: try to restore the EXACT screen the user was on.
+        //   - admin    → only if role=ADMIN
+        //   - game     → only if last character still exists
+        //   - char-sel → always falls through
+        if (lastScreen === 'admin' && fresh.role === 'ADMIN') {
+          useGame.setState({ screen: 'admin', hasSave: true })
+          return
+        }
+        // For 'game' or any other unknown screen → auto-resume the game.
+        // We deliberately don't try to restore battle/create/title screens.
+        const resumeToGame = !lastScreen || lastScreen === 'game' || lastScreen === 'auth'
+        if (resumeToGame && lastChar) {
           try {
             await fresh.selectCharacter(lastChar.id)
             return  // selectCharacter set screen to 'game'

@@ -1160,15 +1160,18 @@ export const useGame = create<Store>()(
     }),
     {
       name: AUTH_KEY,
-      // Only the auth token + username + last active character are
-      // persisted client-side; the game state lives on the server now
-      // (slice 5 endpoints). Slice 32: activeCharacterId added so a
-      // refresh resumes straight into the game instead of bouncing
-      // through character-select.
+      // Persist the auth token + last-active character + last-visited
+      // screen so a refresh lands where the user was.
+      //   Slice 5/16 originals: token, username
+      //   Slice 32: activeCharacterId (auto-resume the game)
+      //   Slice 34: screen — picks from {admin, game, character-select}
+      //             only (battle / create / title / auth are excluded so
+      //             reload doesn't drop into transient flows).
       partialize: (s) => ({
         token: s.token,
         username: s.username,
         activeCharacterId: s.activeCharacterId,
+        screen: (['admin', 'game', 'character-select'] as Screen[]).includes(s.screen) ? s.screen : undefined,
       }),
     },
   ),

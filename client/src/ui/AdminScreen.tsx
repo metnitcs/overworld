@@ -30,7 +30,21 @@ export function AdminScreen() {
   const role = useGame((s) => s.role)
   const username = useGame((s) => s.username)
   const setScreen = useGame((s) => s.setScreen)
-  const [tab, setTab] = useState<Tab>('items')
+  // Slice 34: remember the last-visited admin tab across refreshes so a
+  // reload doesn't always drop the user back on Items. localStorage is
+  // enough — the tab is purely UI state, not server-relevant.
+  const [tab, setTabRaw] = useState<Tab>(() => {
+    if (typeof window === 'undefined') return 'items'
+    const stored = window.localStorage.getItem('asura_admin_tab') as Tab | null
+    const valid: Tab[] = ['items', 'monsters', 'maps', 'races', 'classes', 'characters', 'users', 'logs', 'cache']
+    return stored && valid.includes(stored) ? stored : 'items'
+  })
+  const setTab = (t: Tab) => {
+    setTabRaw(t)
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem('asura_admin_tab', t)
+    }
+  }
   const [counts, setCounts] = useState<CountState>({})
 
   if (role !== 'ADMIN') {

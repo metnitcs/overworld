@@ -157,22 +157,31 @@ function ActionBtn(props: {
   )
 }
 
-/** Slice 32: pull the active character from the server again (admin
- *  edits, cross-tab sync, manual re-sync after a network blip). */
+/** Slice 32 + 34: pull the active character from the server. Used when
+ *  admin edited the character in the DB and the player needs to see
+ *  the new values (no automatic push from server yet — manual pull). */
 function ReloadCharBtn() {
   const reload = useGame((s) => s.reloadActiveCharacter)
+  const log = useGame((s) => s.log)
   const [busy, setBusy] = useState(false)
   return (
     <button
       onClick={async () => {
         if (busy) return
         setBusy(true)
-        try { await reload() } finally { setBusy(false) }
+        try {
+          await reload()
+          log('🔄 โหลดตัวละครจากเซิร์ฟใหม่แล้ว', 'good')
+        } catch {
+          log('โหลดไม่สำเร็จ', 'bad')
+        } finally {
+          setBusy(false)
+        }
       }}
-      className="text-[10px] px-2 py-0.5 rounded bg-white/20 hover:bg-white/30 text-white"
-      title="โหลดตัวละครจากเซิร์ฟใหม่"
+      className="text-[11px] px-2 py-1 rounded bg-kw-yellow text-kw-text font-semibold hover:brightness-110 active:translate-y-[1px]"
+      title="ถ้า admin แก้ค่าของคุณในเซิร์ฟแล้ว กดเพื่อดึงค่าใหม่"
     >
-      {busy ? '⏳' : '🔄'}
+      {busy ? '⏳ กำลังโหลด…' : '🔄 ดึงค่าจากเซิร์ฟ'}
     </button>
   )
 }
