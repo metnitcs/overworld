@@ -57,7 +57,10 @@ export function GameScreen() {
             </span>
           )}
         </span>
-        <span>Map ({game.px}, {game.py})</span>
+        <span className="flex items-center gap-2">
+          <span>Map ({game.px}, {game.py})</span>
+          <ReloadCharBtn />
+        </span>
       </div>
 
       {/* Main area: map on left, chat on right */}
@@ -151,6 +154,26 @@ function ActionBtn(props: {
       </button>
       <span className="text-[9px] text-kw-text-dim font-semibold">{props.label}</span>
     </div>
+  )
+}
+
+/** Slice 32: pull the active character from the server again (admin
+ *  edits, cross-tab sync, manual re-sync after a network blip). */
+function ReloadCharBtn() {
+  const reload = useGame((s) => s.reloadActiveCharacter)
+  const [busy, setBusy] = useState(false)
+  return (
+    <button
+      onClick={async () => {
+        if (busy) return
+        setBusy(true)
+        try { await reload() } finally { setBusy(false) }
+      }}
+      className="text-[10px] px-2 py-0.5 rounded bg-white/20 hover:bg-white/30 text-white"
+      title="โหลดตัวละครจากเซิร์ฟใหม่"
+    >
+      {busy ? '⏳' : '🔄'}
+    </button>
   )
 }
 

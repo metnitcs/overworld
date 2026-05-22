@@ -148,6 +148,9 @@ interface Store {
   transcend: (raceId: string) => Promise<void>
   /** Slice 26: Lv 5 class-change quest resolution. */
   classChange: (classId: string) => Promise<void>
+  /** Slice 32: re-fetch the active character from server (admin edits +
+   *  cross-tab sync). Replaces local `game` with fresh server state. */
+  reloadActiveCharacter: () => Promise<void>
   // Game lifecycle (server-backed; names preserved so existing UI keeps compiling)
   /** Create a new character at the starter race (Slice 17). After creation,
    *  the character is auto-selected and the screen jumps to 'game'. */
@@ -493,6 +496,20 @@ export const useGame = create<Store>()(
         set({ game: deriveStats(gameState) })
         await get().listCharacters()   // refresh roster cache
         get().log(`✨ เปลี่ยนเผ่าเป็น ${raceId}!`, 'good')
+      },
+
+      reloadActiveCharacter: async () => {
+        const token = get().token
+        const id = get().activeCharacterId
+        if (!token || !id) return
+        const r = await api.getCharacterById(token, id)
+        const { id: _, ...gameState } = r.character
+        void _
+        // Recompute derived stats (in case formulas changed in shared
+        // logic since the save).
+        set({ game: deriveStats(gameState) })
+        // Refresh roster cache so character-select reflects latest too.
+        await get().listCharacters()
       },
 
       classChange: async (classId) => {
@@ -956,20 +973,29 @@ export const useGame = create<Store>()(
       },
 
       // Inventory
+      // Slice 32: equip/unequip are explicit API calls (await PUT) so a
+      // refresh immediately after a click still sees the new state on the
+      // server. Local set() is optimistic; on PUT failure we log + revert.
       equip: (key) => {
         const it = get().content?.items[key]
         if (!it) return
-        const g = { ...get().game }
+        const prev = get().game
+        const g = { ...prev }
         if (it.type === 'weapon') g.equipWeapon = key
         else if (it.type === 'armor') g.equipArmor = key
-        set({ game: deriveStats(g) })
+        const next = deriveStats(g)
+        set({ game: next })
         get().log(`สวม ${it.name}`, 'good')
+        void persistGameNow(get, set, prev)
       },
       unequip: (key) => {
-        const g = { ...get().game }
+        const prev = get().game
+        const g = { ...prev }
         if (g.equipWeapon === key) g.equipWeapon = null
         if (g.equipArmor === key) g.equipArmor = null
-        set({ game: deriveStats(g) })
+        const next = deriveStats(g)
+        set({ game: next })
+        void persistGameNow(get, set, prev)
       },
       useConsume: (key) => {
         const it = get().content?.items[key]
@@ -1099,9 +1125,16 @@ export const useGame = create<Store>()(
     }),
     {
       name: AUTH_KEY,
-      // Only the auth token + username are persisted client-side; the game
-      // state lives on the server now (slice 5 endpoints).
-      partialize: (s) => ({ token: s.token, username: s.username }),
+      // Only the auth token + username + last active character are
+      // persisted client-side; the game state lives on the server now
+      // (slice 5 endpoints). Slice 32: activeCharacterId added so a
+      // refresh resumes straight into the game instead of bouncing
+      // through character-select.
+      partialize: (s) => ({
+        token: s.token,
+        username: s.username,
+        activeCharacterId: s.activeCharacterId,
+      }),
     },
   ),
 )
@@ -1211,6 +1244,32 @@ console.debug('[autosave] subscriber registered (debounce', AUTOSAVE_DEBOUNCE_MS
 /** Flush any pending autosave immediately. Used for tab-close + visibility
  *  transitions so the latest state survives. Uses fetch keepalive so the
  *  browser will deliver the request even after the page is unloaded. */
+/** Slice 32: explicit-save helper for equip/unequip/etc. — does an
+ *  immediate (awaited) PUT to the server so a refresh-right-after-click
+ *  still sees the new state. On failure, reverts local state to `prev`
+ *  so the UI doesn't lie about persistence. Also flushes any pending
+ *  debounced autosave to avoid a race. */
+async function persistGameNow(
+  get: () => Store,
+  set: (s: Partial<Store>) => void,
+  prev: GameState,
+): Promise<void> {
+  const cur = get()
+  if (!cur.token || !cur.activeCharacterId) return
+  // Cancel any pending debounced autosave — we're saving now.
+  if (saveTimer) { clearTimeout(saveTimer); saveTimer = null }
+  setSaveStatus('saving')
+  try {
+    await api.saveCharacterById(cur.token, cur.activeCharacterId, toSaveBody(cur.game))
+    lastSavedSnapshot = snapshotOf(cur.game)
+    setSaveStatus('saved')
+  } catch (err) {
+    console.error('[persistGameNow] save failed, reverting', err)
+    set({ game: prev })
+    setSaveStatus('error')
+  }
+}
+
 export function flushSave(): void {
   if (saveTimer) {
     clearTimeout(saveTimer)

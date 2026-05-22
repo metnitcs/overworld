@@ -104,13 +104,27 @@ export default function App() {
         useGame.setState({ role: meRes.user.role })
         return st.listCharacters()
       })
-      .then(() => {
-        const count = useGame.getState().characters.length
+      .then(async () => {
+        const fresh = useGame.getState()
+        const count = fresh.characters.length
         if (count === 0) {
           useGame.setState({ screen: 'create', hasSave: false })
-        } else {
-          useGame.setState({ screen: 'character-select', hasSave: true })
+          return
         }
+        // Slice 32: if the persisted activeCharacterId is still owned by
+        // this account, resume DIRECTLY into the game (skip the picker).
+        // Otherwise fall back to the character-select screen.
+        const lastId = fresh.activeCharacterId
+        const lastChar = lastId ? fresh.characters.find((c) => c.id === lastId) : undefined
+        if (lastChar) {
+          try {
+            await fresh.selectCharacter(lastChar.id)
+            return  // selectCharacter set screen to 'game'
+          } catch {
+            // Fall through to character-select on any error
+          }
+        }
+        useGame.setState({ screen: 'character-select', hasSave: true })
       })
       .catch((err) => {
         if (err instanceof ApiError && err.status === 401) {
