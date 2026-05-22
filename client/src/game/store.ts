@@ -1043,46 +1043,68 @@ export const useGame = create<Store>()(
       //     row, unequip auto-adds 1 so the item isn't lost. Keeps the
       //     Slice 33 data-loss fix in place without breaking the
       //     player-side mental model.
+      // Slice 39: equip/unequip now call dedicated intent endpoints —
+      // server validates inventory + flips the pointer + returns the
+      // freshly-derived character. No more local mutation + autosave race.
       equip: (key) => {
+        const token = get().token
+        const id = get().activeCharacterId
         const it = get().content?.items[key]
-        if (!it) return
-        const prev = get().game
-        const g = { ...prev, inventory: { ...prev.inventory } }
-
-        if ((g.inventory[key] || 0) < 1) {
+        if (!token || !id || !it) return
+        if (it.type !== 'weapon' && it.type !== 'armor') return
+        if ((get().game.inventory[key] || 0) < 1) {
           get().log(`ไม่มี ${it.name} ในกระเป๋า`, 'bad')
           return
         }
-
-        const slot: 'equipWeapon' | 'equipArmor' =
-          it.type === 'weapon' ? 'equipWeapon' : 'equipArmor'
-        if (it.type !== 'weapon' && it.type !== 'armor') return
-        g[slot] = key
-
-        const next = deriveStats(g, { items: get().content?.items })
-        set({ game: next })
-        get().log(`สวม ${it.name}`, 'good')
-        void persistGameNow(get, set, prev)
+        void (async () => {
+          setSaveStatus('saving')
+          try {
+            const r = await api.equipCharacter(token, id, key)
+            const { id: _, updatedAt, ...gameState } = r.character
+            void _
+            rememberSync(id, updatedAt)
+            const next = deriveStats(gameState, { items: get().content?.items })
+            useGame.setState({ game: next })
+            lastSavedSnapshot = snapshotOf(next)
+            setSaveStatus('saved')
+            get().log(`สวม ${it.name}`, 'good')
+          } catch (err) {
+            setSaveStatus('error')
+            const msg = err instanceof ApiError && err.body && typeof err.body === 'object' && 'error' in err.body
+              ? String((err.body as { error: string }).error) : String(err)
+            get().log(`สวมไม่ได้: ${msg}`, 'bad')
+          }
+        })()
       },
       unequip: (key) => {
-        const prev = get().game
-        const g = { ...prev, inventory: { ...prev.inventory } }
-        let cleared = false
-        if (g.equipWeapon === key) { g.equipWeapon = null; cleared = true }
-        if (g.equipArmor === key)  { g.equipArmor  = null; cleared = true }
-        if (!cleared) return
-
-        // Safety net for admin-assigned slots: if the item has no inv
-        // row, add 1 so unequip doesn't make it disappear forever.
-        if ((g.inventory[key] || 0) < 1) {
-          g.inventory[key] = 1
-        }
-
-        const it = get().content?.items[key]
-        const next = deriveStats(g, { items: get().content?.items })
-        set({ game: next })
-        get().log(`ถอด ${it?.name ?? key}`, 'system')
-        void persistGameNow(get, set, prev)
+        const token = get().token
+        const id = get().activeCharacterId
+        if (!token || !id) return
+        const game = get().game
+        const slot: 'weapon' | 'armor' | null =
+          game.equipWeapon === key ? 'weapon' :
+          game.equipArmor === key ? 'armor' : null
+        if (!slot) return
+        const itName = get().content?.items[key]?.name ?? key
+        void (async () => {
+          setSaveStatus('saving')
+          try {
+            const r = await api.unequipCharacter(token, id, slot)
+            const { id: _, updatedAt, ...gameState } = r.character
+            void _
+            rememberSync(id, updatedAt)
+            const next = deriveStats(gameState, { items: get().content?.items })
+            useGame.setState({ game: next })
+            lastSavedSnapshot = snapshotOf(next)
+            setSaveStatus('saved')
+            get().log(`ถอด ${itName}`, 'system')
+          } catch (err) {
+            setSaveStatus('error')
+            const msg = err instanceof ApiError && err.body && typeof err.body === 'object' && 'error' in err.body
+              ? String((err.body as { error: string }).error) : String(err)
+            get().log(`ถอดไม่ได้: ${msg}`, 'bad')
+          }
+        })()
       },
       useConsume: (key) => {
         const it = get().content?.items[key]
@@ -1377,44 +1399,6 @@ console.debug('[autosave] subscriber registered (debounce', AUTOSAVE_DEBOUNCE_MS
 /** Flush any pending autosave immediately. Used for tab-close + visibility
  *  transitions so the latest state survives. Uses fetch keepalive so the
  *  browser will deliver the request even after the page is unloaded. */
-/** Slice 32: explicit-save helper for equip/unequip/etc. — does an
- *  immediate (awaited) PUT to the server so a refresh-right-after-click
- *  still sees the new state. On failure, reverts local state to `prev`
- *  so the UI doesn't lie about persistence. Also flushes any pending
- *  debounced autosave to avoid a race.
- *  Slice 37: emits chat logs so the player has a clear in-game signal
- *  that the save round-trip happened (the tiny top-bar indicator was
- *  easy to miss). */
-async function persistGameNow(
-  get: () => Store,
-  set: (s: Partial<Store>) => void,
-  prev: GameState,
-): Promise<void> {
-  const cur = get()
-  if (!cur.token || !cur.activeCharacterId) return
-  // Cancel any pending debounced autosave — we're saving now.
-  if (saveTimer) { clearTimeout(saveTimer); saveTimer = null }
-  setSaveStatus('saving')
-  const r = await putWithStaleRetry(cur.token, cur.activeCharacterId, cur.game)
-  if (r.ok) {
-    if (r.gameAfter !== cur.game) {
-      set({ game: r.gameAfter })
-      lastSavedSnapshot = snapshotOf(r.gameAfter)
-      cur.log('🔄 sync ของในกระเป๋ากับ server แล้ว', 'system')
-    } else {
-      lastSavedSnapshot = snapshotOf(cur.game)
-    }
-    setSaveStatus('saved')
-  } else {
-    const err = r.err
-    const msg = err instanceof Error ? err.message : String(err)
-    console.error('[persistGameNow] save failed, reverting', err)
-    set({ game: prev })
-    setSaveStatus('error')
-    cur.log(`⚠ บันทึกล้มเหลว — กลับไปสถานะเดิม (${msg})`, 'bad')
-  }
-}
-
 export function flushSave(): void {
   if (saveTimer) {
     clearTimeout(saveTimer)

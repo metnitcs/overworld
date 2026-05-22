@@ -645,6 +645,147 @@ describe('POST /api/character/:id/reset-stats (Slice 23 reset)', () => {
   })
 })
 
+// ─── Slice 39 — equip/unequip intent endpoints ────────────────────────────
+describe('POST /api/character/:id/equip', () => {
+  async function createCharWithItem(token: string, name: string, itemKey: string, qty = 1): Promise<string> {
+    const created = await app.inject({
+      method: 'POST', url: '/api/character', headers: { authorization: `Bearer ${token}` },
+      payload: { name },
+    })
+    const id = (created.json() as { character: { id: string } }).character.id
+    await prisma.inventoryItem.upsert({
+      where: { characterId_itemKey: { characterId: id, itemKey } },
+      create: { characterId: id, itemKey, qty },
+      update: { qty },
+    })
+    return id
+  }
+
+  it('equips a weapon the player owns and bumps derived atk', async () => {
+    const token = await registerAndGetToken('test_equip_ok')
+    const id = await createCharWithItem(token, 'Eq', 'sword-1')
+    const before = await app.inject({
+      method: 'GET', url: `/api/character/${id}`, headers: { authorization: `Bearer ${token}` },
+    })
+    const atkBefore = (before.json() as { character: { atk: number } }).character.atk
+
+    const res = await app.inject({
+      method: 'POST', url: `/api/character/${id}/equip`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { itemKey: 'sword-1' },
+    })
+    expect(res.statusCode).toBe(200)
+    const body = res.json() as { character: { equipWeapon: string | null; atk: number; inventory: Record<string, number> } }
+    expect(body.character.equipWeapon).toBe('sword-1')
+    // Item is a pointer — still in bag (Slice 36 model).
+    expect(body.character.inventory['sword-1']).toBe(1)
+    expect(body.character.atk).toBeGreaterThan(atkBefore)
+  })
+
+  it('rejects equipping an item the player does not own (409)', async () => {
+    const token = await registerAndGetToken('test_equip_unowned')
+    const created = await app.inject({
+      method: 'POST', url: '/api/character', headers: { authorization: `Bearer ${token}` },
+      payload: { name: 'X' },
+    })
+    const id = (created.json() as { character: { id: string } }).character.id
+    const res = await app.inject({
+      method: 'POST', url: `/api/character/${id}/equip`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { itemKey: 'sword-1' },
+    })
+    expect(res.statusCode).toBe(409)
+  })
+
+  it('rejects equipping a non-equip item (potion) with 400', async () => {
+    const token = await registerAndGetToken('test_equip_potion')
+    const id = await createCharWithItem(token, 'P', 'potion-s', 5)
+    const res = await app.inject({
+      method: 'POST', url: `/api/character/${id}/equip`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { itemKey: 'potion-s' },
+    })
+    expect(res.statusCode).toBe(400)
+  })
+
+  it("returns 404 when equipping on another user's character", async () => {
+    const tokenA = await registerAndGetToken('test_equip_a')
+    const id = await createCharWithItem(tokenA, 'A', 'sword-1')
+    const tokenB = await registerAndGetToken('test_equip_b')
+    const res = await app.inject({
+      method: 'POST', url: `/api/character/${id}/equip`,
+      headers: { authorization: `Bearer ${tokenB}` },
+      payload: { itemKey: 'sword-1' },
+    })
+    expect(res.statusCode).toBe(404)
+  })
+})
+
+describe('POST /api/character/:id/unequip', () => {
+  it('clears the requested slot and item stays in inventory', async () => {
+    const token = await registerAndGetToken('test_unequip_ok')
+    const created = await app.inject({
+      method: 'POST', url: '/api/character', headers: { authorization: `Bearer ${token}` },
+      payload: { name: 'U' },
+    })
+    const id = (created.json() as { character: { id: string } }).character.id
+    await prisma.inventoryItem.create({ data: { characterId: id, itemKey: 'sword-1', qty: 1 } })
+    await app.inject({
+      method: 'POST', url: `/api/character/${id}/equip`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { itemKey: 'sword-1' },
+    })
+    const res = await app.inject({
+      method: 'POST', url: `/api/character/${id}/unequip`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { slot: 'weapon' },
+    })
+    expect(res.statusCode).toBe(200)
+    const body = res.json() as { character: { equipWeapon: string | null; inventory: Record<string, number> } }
+    expect(body.character.equipWeapon).toBeNull()
+    expect(body.character.inventory['sword-1']).toBe(1) // pointer cleared, item kept
+  })
+
+  it('safety: unequipping an admin-assigned slot without inventory row re-adds 1', async () => {
+    const token = await registerAndGetToken('test_unequip_safety')
+    const created = await app.inject({
+      method: 'POST', url: '/api/character', headers: { authorization: `Bearer ${token}` },
+      payload: { name: 'S' },
+    })
+    const id = (created.json() as { character: { id: string } }).character.id
+    // Simulate admin setting equipWeapon without adding to inventory.
+    await prisma.character.update({
+      where: { id },
+      data: { equipWeapon: 'sword-1' },
+    })
+
+    const res = await app.inject({
+      method: 'POST', url: `/api/character/${id}/unequip`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { slot: 'weapon' },
+    })
+    expect(res.statusCode).toBe(200)
+    const body = res.json() as { character: { equipWeapon: string | null; inventory: Record<string, number> } }
+    expect(body.character.equipWeapon).toBeNull()
+    expect(body.character.inventory['sword-1']).toBe(1) // safety top-up
+  })
+
+  it('no-op when the slot is already empty', async () => {
+    const token = await registerAndGetToken('test_unequip_empty')
+    const created = await app.inject({
+      method: 'POST', url: '/api/character', headers: { authorization: `Bearer ${token}` },
+      payload: { name: 'E' },
+    })
+    const id = (created.json() as { character: { id: string } }).character.id
+    const res = await app.inject({
+      method: 'POST', url: `/api/character/${id}/unequip`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { slot: 'armor' },
+    })
+    expect(res.statusCode).toBe(200)
+  })
+})
+
 describe('DELETE /api/character/:id (Slice 16 slot reclaim)', () => {
   it('removes the character so the slot can be reused', async () => {
     const token = await registerAndGetToken('test_del')

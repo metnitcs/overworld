@@ -385,6 +385,21 @@ export const api = {
       method: 'POST', token,
     }),
 
+  /** Slice 39 — equip an item the character owns. Server validates inventory
+   *  + item type, points the matching slot at it, returns the freshly-derived
+   *  character. The item stays in the bag (Slice 36 pointer model). */
+  equipCharacter: (token: string, id: string, itemKey: string) =>
+    request<CharacterResponse>(`/api/character/${id}/equip`, {
+      method: 'POST', token, body: { itemKey },
+    }),
+
+  /** Slice 39 — clear the named equip slot. Safety re-adds the cleared item
+   *  to inventory if there was no row (admin-assigned slots). */
+  unequipCharacter: (token: string, id: string, slot: 'weapon' | 'armor') =>
+    request<CharacterResponse>(`/api/character/${id}/unequip`, {
+      method: 'POST', token, body: { slot },
+    }),
+
   // ─── Legacy first-char endpoints (kept until full removal) ───
   getCharacter: (token: string) =>
     request<CharacterResponse>('/api/character', { token }),

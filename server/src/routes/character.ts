@@ -80,6 +80,16 @@ const changeClassSchema = z.object({
   classId: z.string(),
 })
 
+/** Slice 39: equip/unequip intent endpoints — Slice 45 will remove
+ *  equipWeapon/equipArmor from the player PUT entirely, leaving these
+ *  as the only path to mutate equip slots from the client. */
+const equipSchema = z.object({
+  itemKey: z.string().min(1),
+})
+const unequipSchema = z.object({
+  slot: z.enum(['weapon', 'armor']),
+})
+
 const DEFAULT_INVENTORY: Record<string, number> = { 'potion-s': 3 }
 
 /** Map a DB Character (+inventory rows) into the API shape, which mirrors the
@@ -559,6 +569,113 @@ export function registerCharacterRoutes(app: FastifyInstance): void {
         atk: next.atk, def: next.def, spd: next.spd,
       },
       include: { inventory: true },
+    })
+    return reply.send({ character: toApiCharacter(updated) })
+  })
+
+  // ─── POST /api/character/:id/equip — Slice 39 intent endpoint ─────────────
+  // Server validates the item exists in content + lives in the player's
+  // inventory before pointing the slot at it. Re-runs deriveStats so the
+  // returned payload already reflects new atk/def. The item stays in the
+  // bag (Demon Online-style "equip is a pointer, not a transfer", Slice 36).
+  app.post('/api/character/:id/equip', { preHandler: app.requireAuth }, async (req, reply) => {
+    const parsed = equipSchema.safeParse(req.body)
+    if (!parsed.success) {
+      return reply.code(400).send({ error: 'invalid input', issues: parsed.error.issues })
+    }
+    const { id } = req.params as { id: string }
+    const { itemKey } = parsed.data
+
+    const existing = await app.prisma.character.findUnique({
+      where: { id }, include: { inventory: true },
+    })
+    if (!existing || existing.userId !== req.userId) {
+      return reply.code(404).send({ error: 'character not found' })
+    }
+    const bundle = await app.contentCache.get()
+    const item = bundle.items[itemKey]
+    if (!item) return reply.code(404).send({ error: 'item not found' })
+    if (item.type !== 'weapon' && item.type !== 'armor') {
+      return reply.code(400).send({ error: 'item is not equippable' })
+    }
+    const ownedQty = existing.inventory.find((it) => it.itemKey === itemKey)?.qty ?? 0
+    if (ownedQty < 1) return reply.code(409).send({ error: 'item not in inventory' })
+
+    const slotField = item.type === 'weapon' ? 'equipWeapon' : 'equipArmor'
+    const draft: GameState & { id: string } = {
+      ...toApiCharacter(existing),
+      [slotField]: itemKey,
+    }
+    const next = deriveStats(draft, { items: bundle.items })
+    const updated = await app.prisma.character.update({
+      where: { id: existing.id },
+      data: {
+        [slotField]: itemKey,
+        maxHp: next.maxHp, maxMp: next.maxMp,
+        hp: next.hp, mp: next.mp,
+        atk: next.atk, def: next.def, spd: next.spd,
+      },
+      include: { inventory: true },
+    })
+    return reply.send({ character: toApiCharacter(updated) })
+  })
+
+  // ─── POST /api/character/:id/unequip — Slice 39 intent endpoint ───────────
+  // Clears the named slot. Safety net mirroring client Slice 33 logic:
+  // if the previously-equipped key has no inventory row (admin-assigned
+  // without a matching bag entry), add 1 so the item isn't lost on unequip.
+  app.post('/api/character/:id/unequip', { preHandler: app.requireAuth }, async (req, reply) => {
+    const parsed = unequipSchema.safeParse(req.body)
+    if (!parsed.success) {
+      return reply.code(400).send({ error: 'invalid input', issues: parsed.error.issues })
+    }
+    const { id } = req.params as { id: string }
+    const { slot } = parsed.data
+
+    const existing = await app.prisma.character.findUnique({
+      where: { id }, include: { inventory: true },
+    })
+    if (!existing || existing.userId !== req.userId) {
+      return reply.code(404).send({ error: 'character not found' })
+    }
+    const slotField = slot === 'weapon' ? 'equipWeapon' : 'equipArmor'
+    const cleared = slot === 'weapon' ? existing.equipWeapon : existing.equipArmor
+    if (cleared === null) {
+      return reply.send({ character: toApiCharacter(existing) }) // no-op
+    }
+    const ownedQty = existing.inventory.find((it) => it.itemKey === cleared)?.qty ?? 0
+    const bundle = await app.contentCache.get()
+    const draft: GameState & { id: string } = {
+      ...toApiCharacter(existing),
+      [slotField]: null,
+      // Safety: rebuild inventory dict for deriveStats with the safety
+      // top-up applied if needed.
+      inventory: ownedQty < 1
+        ? { ...Object.fromEntries(existing.inventory.map((it) => [it.itemKey, it.qty])), [cleared]: 1 }
+        : Object.fromEntries(existing.inventory.map((it) => [it.itemKey, it.qty])),
+    }
+    const next = deriveStats(draft, { items: bundle.items })
+
+    const updated = await app.prisma.$transaction(async (tx) => {
+      await tx.character.update({
+        where: { id: existing.id },
+        data: {
+          [slotField]: null,
+          maxHp: next.maxHp, maxMp: next.maxMp,
+          hp: next.hp, mp: next.mp,
+          atk: next.atk, def: next.def, spd: next.spd,
+        },
+      })
+      if (ownedQty < 1) {
+        await tx.inventoryItem.upsert({
+          where: { characterId_itemKey: { characterId: existing.id, itemKey: cleared } },
+          create: { characterId: existing.id, itemKey: cleared, qty: 1 },
+          update: { qty: 1 },
+        })
+      }
+      return tx.character.findUniqueOrThrow({
+        where: { id: existing.id }, include: { inventory: true },
+      })
     })
     return reply.send({ character: toApiCharacter(updated) })
   })
