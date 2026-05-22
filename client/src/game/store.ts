@@ -21,7 +21,7 @@ import {
   deriveStats, applyExp, scaleEnemy, rollLoot, resolveEnhance, rollSpawns,
   rollEncounter,
   findPath, type PathStep,
-  TRANSCEND_LV, CLASS_CHANGE_LV,
+  TRANSCEND_LV, CLASS_CHANGE_LV, expForLv,
 } from '@asura/shared'
 import { api, ApiError, type SaveBody } from '../api/client'
 
@@ -454,6 +454,21 @@ export const useGame = create<Store>()(
           screen: 'game',
         })
         get().log(`เลือก ${gameState.name} แล้ว — เริ่มที่ ${mapInfo.name}`, 'system')
+
+        // Slice 29: if the loaded character is ALREADY past a quest
+        // threshold without having picked, fire the modal right away.
+        // (The level-up trigger in gainExp only fires on the threshold
+        // edge; pre-existing chars need a load-time check too.)
+        setTimeout(() => {
+          const g = get().game
+          if (g.lv >= TRANSCEND_LV && !g.transcended) {
+            get().log('⏸ พบเควสค้าง: เลือกเผ่าก่อน EXP ถึงจะขึ้นต่อ', 'bad')
+            set({ modal: 'race-change' })
+          } else if (g.lv >= CLASS_CHANGE_LV && g.transcended && !g.classChanged) {
+            get().log('⏸ พบเควสค้าง: เลือกอาชีพก่อน EXP ถึงจะขึ้นต่อ', 'bad')
+            set({ modal: 'class-choice' })
+          }
+        }, 200)
       },
 
       removeCharacter: async (id) => {
@@ -636,6 +651,36 @@ export const useGame = create<Store>()(
 
       gainExp: (amt) => {
         const cur = get().game
+
+        // Slice 29: EXP is HARD-CAPPED at the quest threshold until the
+        // player resolves the quest. Hitting Lv 10 with !transcended (or
+        // Lv 120 with !classChanged) freezes you at threshold-1 exp until
+        // you pick — the modal is forced open.
+        const racePending  = cur.lv >= TRANSCEND_LV   && !cur.transcended
+        const classPending = cur.lv >= CLASS_CHANGE_LV && cur.transcended && !cur.classChanged
+
+        if (racePending || classPending) {
+          // Cap exp just below next level so player CAN'T tick over to Lv+1.
+          const cap = expForLv(cur.lv) - 1
+          const newExp = Math.min(cur.exp + amt, cap)
+          if (newExp !== cur.exp) {
+            set({ game: { ...cur, exp: newExp } })
+          }
+          // Force the relevant modal back open. Re-popping is harmless
+          // since the modal is already self-contained.
+          if (get().modal === 'none' && get().screen === 'game') {
+            const which: 'race-change' | 'class-choice' =
+              racePending ? 'race-change' : 'class-choice'
+            const msg = racePending
+              ? '⏸ ต้องเลือกเผ่าก่อน EXP ถึงจะขึ้นต่อ'
+              : '⏸ ต้องเลือกอาชีพก่อน EXP ถึงจะขึ้นต่อ'
+            get().log(msg, 'bad')
+            set({ modal: which })
+          }
+          return
+        }
+
+        // Normal path — gain exp + level up.
         const { lv, exp, levelsGained } = applyExp(cur.lv, cur.exp, amt)
         let g = { ...cur, lv, exp }
         if (levelsGained > 0) {
@@ -648,9 +693,9 @@ export const useGame = create<Store>()(
         }
         set({ game: g })
 
-        // Slice 17 / 27: Lv 10 race-change quest fires FIRST (lower threshold).
-        // Only one modal at a time — race choice comes before the Lv-120
-        // class choice in the progression tree.
+        // Slice 17 / 27: Lv 10 race-change quest fires when the player
+        // crosses the threshold for the first time. (Subsequent kills
+        // are caught by the racePending guard above.)
         if (
           cur.lv < TRANSCEND_LV &&
           g.lv >= TRANSCEND_LV &&
@@ -662,8 +707,6 @@ export const useGame = create<Store>()(
           set({ modal: 'race-change' })
         }
         // Slice 26 / 27: Lv 120 class-change quest — endgame tier-3 choice.
-        // Only fires after the race quest (transcended=true) so the modal
-        // can filter classes by race; defensive guard checks transcended.
         else if (
           cur.lv < CLASS_CHANGE_LV &&
           g.lv >= CLASS_CHANGE_LV &&
