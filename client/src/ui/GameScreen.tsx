@@ -43,19 +43,9 @@ export function GameScreen() {
       {/* TOP BAR */}
       <div className="top-bar">
         <span className="font-bold">{mapInfo.name}</span>
-        <span className="text-kw-yellow">
+        <span className="flex items-center gap-3 text-kw-yellow">
           [ Asura Server x 1 ]
-          {saveStatus !== 'idle' && (
-            <span
-              className={`ml-3 text-[11px] font-normal ${
-                saveStatus === 'error' ? 'text-kw-red' :
-                saveStatus === 'saving' ? 'text-white/70' :
-                'text-green-200'
-              }`}
-            >
-              {SAVE_STATUS_LABEL[saveStatus]}
-            </span>
-          )}
+          <SaveBadge status={saveStatus} />
         </span>
         <span className="flex items-center gap-2">
           <span>Map ({game.px}, {game.py})</span>
@@ -154,6 +144,38 @@ function ActionBtn(props: {
       </button>
       <span className="text-[9px] text-kw-text-dim font-semibold">{props.label}</span>
     </div>
+  )
+}
+
+/** Slice 37: prominent visual feedback for the autosave + explicit-save
+ *  pipeline. The old indicator was a tiny text fragment after the server
+ *  name — easy to miss, so the user thought saves weren't happening at
+ *  all. Now a coloured pill with icon + label. Hides after `saved` for
+ *  ~2s of idle. */
+function SaveBadge({ status }: { status: SaveStatus }) {
+  const [visible, setVisible] = useState(false)
+  useEffect(() => {
+    if (status === 'idle') {
+      setVisible(false)
+      return
+    }
+    setVisible(true)
+    if (status === 'saved') {
+      const t = setTimeout(() => setVisible(false), 2000)
+      return () => clearTimeout(t)
+    }
+  }, [status])
+  if (!visible) return null
+  const style =
+    status === 'saving' ? 'bg-blue-400 text-white'
+    : status === 'saved' ? 'bg-green-500 text-white'
+    : 'bg-kw-red text-white animate-pulse'
+  return (
+    <span className={`px-2.5 py-0.5 rounded-full text-[11px] font-semibold ${style}`}>
+      {status === 'saving' ? '💾 กำลังบันทึก…' :
+       status === 'saved'  ? '✓ บันทึกแล้ว' :
+       '⚠ บันทึกล้มเหลว'}
+    </span>
   )
 }
 

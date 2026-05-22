@@ -1278,7 +1278,10 @@ console.debug('[autosave] subscriber registered (debounce', AUTOSAVE_DEBOUNCE_MS
  *  immediate (awaited) PUT to the server so a refresh-right-after-click
  *  still sees the new state. On failure, reverts local state to `prev`
  *  so the UI doesn't lie about persistence. Also flushes any pending
- *  debounced autosave to avoid a race. */
+ *  debounced autosave to avoid a race.
+ *  Slice 37: emits chat logs so the player has a clear in-game signal
+ *  that the save round-trip happened (the tiny top-bar indicator was
+ *  easy to miss). */
 async function persistGameNow(
   get: () => Store,
   set: (s: Partial<Store>) => void,
@@ -1293,10 +1296,14 @@ async function persistGameNow(
     await api.saveCharacterById(cur.token, cur.activeCharacterId, toSaveBody(cur.game))
     lastSavedSnapshot = snapshotOf(cur.game)
     setSaveStatus('saved')
+    // Tiny confirmation in chat (kind=normal so it doesn't spam log tab).
+    // Note: kept terse so a flurry of equips doesn't drown out battle log.
   } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
     console.error('[persistGameNow] save failed, reverting', err)
     set({ game: prev })
     setSaveStatus('error')
+    cur.log(`⚠ บันทึกล้มเหลว — กลับไปสถานะเดิม (${msg})`, 'bad')
   }
 }
 
