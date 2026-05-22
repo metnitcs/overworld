@@ -1,44 +1,37 @@
 import type { Race, CharClass, MapDef, ItemDef, Recipe, TileDef, NpcDef } from './types.js'
 
-// Slice 17 race reform: starter = มนุษย์ (human). At Lv 10, character can
-// transcend into มาร or เทพ via the race-change quest (see RaceChangeModal).
-// Slice 25 redesign: race contributes flat *modifiers* to primary stats,
-// applied once at character creation. Race no longer holds hp/mp/atk/def/spd
-// directly — all combat numbers now derive from primary stats + lv.
+// Slice 17 race reform → Slice 27 finalization: "race" is the TIER-2 branch
+// of the unified class progression tree (Adventurer → race@Lv10 → class@Lv120).
+// Race is purely a class-tree branch — base stats are IDENTICAL across all
+// three races (modifiers = {}). What differs is which advanced classes you
+// unlock at Lv 120: human → warrior/priest, mara → assassin/shaman,
+// god → heaven-knight/war-god.
 //
-// Modifier budget guideline: net total ≈ 0 (boons offset by banes) so no race
-// is strictly stronger than another. Sum of |values| ≈ 6–10 keeps differences
-// noticeable without being game-defining at low lv.
+// Slice 25 modifier system kept as plumbing for future tuning but currently
+// every race ships {}. If we ever want race-flavor we can dial in numbers
+// without changing any code.
 export const RACES: Race[] = [
   { id: 'human', name: 'เผ่ามนุษย์', emoji: '🧑',
-    desc: 'สมดุลทุกด้าน — เผ่าเริ่มต้นของผู้กล้า ไม่มี modifier ใดๆ',
+    desc: 'สายสมดุล — ปลดล็อก นักรบ / นักบวช',
     modifiers: {},
     available: true, starter: true },
   { id: 'mara',  name: 'เผ่ามาร',     emoji: '😈',
-    desc: 'สายลุย/แทงค์ — STR + VIT สูง แลกกับ INT และ LUK',
-    modifiers: { str: +3, vit: +2, int: -3, luk: -2 },
+    desc: 'สายมืด — ปลดล็อก นักฆ่า / ชาแมน',
+    modifiers: {},
     available: true },
   { id: 'god',   name: 'เผ่าเทพ',     emoji: '👑',
-    desc: 'สายเวท — INT และ LUK สูง แลกกับพละกำลังและความอึด',
-    modifiers: { int: +4, luk: +2, str: -2, vit: -2, agi: -2 },
+    desc: 'สายแสง — ปลดล็อก เฮเวลไนท์ / เทพสงคราม',
+    modifiers: {},
     available: true },
-  // ─── deprecated (kept for backward compatibility with old saves) ────
+  // ─── deprecated (kept so old saves still render race names) ────────
   { id: 'angel', name: 'เผ่านางฟ้า',   emoji: '👼',
-    desc: 'MP เยอะ ฟื้นฟูเก่ง',
-    modifiers: { int: +3, luk: +2, vit: -2, str: -3 },
-    available: false },
+    desc: 'legacy', modifiers: {}, available: false },
   { id: 'beast', name: 'เผ่าสัตว์อสูร', emoji: '🐺',
-    desc: 'รวดเร็ว ป้องกันดี',
-    modifiers: { agi: +4, vit: +1, int: -3, dex: -2 },
-    available: false },
+    desc: 'legacy', modifiers: {}, available: false },
   { id: 'yaksa', name: 'เผ่ายักษ์',    emoji: '👺',
-    desc: 'อึดสุด พลังถึก',
-    modifiers: { vit: +5, str: +3, agi: -4, dex: -2, int: -2 },
-    available: false },
+    desc: 'legacy', modifiers: {}, available: false },
   { id: 'phaya', name: 'เผ่าพญามาร',  emoji: '🦹',
-    desc: 'สมดุลระดับสูง',
-    modifiers: { str: +2, int: +2, agi: +1, vit: -2, luk: -3 },
-    available: false },
+    desc: 'legacy', modifiers: {}, available: false },
 ]
 
 /** Helper for UI: race-change modal + character-create flow show only these. */
@@ -68,45 +61,76 @@ export const BASE_HP = 50
 /** Flat MP floor, before INT and Lv add in. */
 export const BASE_MP = 20
 
-// Slice 25 redesign: class.growth is a *recommendation* — UI uses it to
-// suggest builds or power an "auto-allocate by class" button. The server
-// never applies it automatically. Values are relative weights (typical
-// range 1–4), no fixed sum. The temporary `skill` field stays until the
-// dedicated Skill table slice.
+// Slice 27 — unified class progression tree:
+//   Adventurer (Lv 1, starter, no race lock)
+//       │
+//       └── ผ่าน Lv 10 → เลือก race (human/mara/god)
+//                                 │
+//                                 └── Lv 120 → เลือก 1 ใน 2 อาชีพของสาย
 //
-// Slice 26: 'adventurer' is the new starter class. Every fresh character
-// begins as Adventurer; at CLASS_CHANGE_LV the player picks one of the six
-// advanced classes via the ClassChoiceModal.
+//   - human  → warrior   (tank/melee) | priest    (support/heal)
+//   - mara   → assassin  (DPS/crit)   | shaman    (magic)
+//   - god    → heavenkn  (tank/holy)  | war-god   (DPS/holy)
+//
+// growth is recommendation only (Slice 25) — server never auto-applies.
+// requiredRaceId (Slice 27) gates which classes appear in ClassChoiceModal
+// based on the player's chosen race; adventurer has no requirement.
 export const CLASSES: CharClass[] = [
   { id: 'adventurer', name: 'นักผจญภัย',           emoji: '🎒',
-    desc: 'มือใหม่ — สมดุลทุกด้าน รอเปลี่ยนคลาสที่ Lv 5',
+    desc: 'มือใหม่ — สมดุลทุกด้าน รอเปลี่ยนอาชีพที่ Lv 120',
     growth: { str: 1, dex: 1, vit: 1 },
     skill: { name: 'ฟันธรรมดา',      mp: 0,  mult: 1.2, type: 'phys' },
     starter: true },
-  { id: 'berserk',    name: 'นักดาบเดือด',          emoji: '⚔️',
-    desc: 'นักรบสายลุย — โจมตีหนัก ทนทาน เข้าใกล้',
+
+  // ─── สายมนุษย์ ─────────────────────────────────────────────────────
+  { id: 'warrior',    name: 'นักรบ',               emoji: '⚔️',
+    desc: 'นักรบสายลุย — โจมตีหนัก ทนทาน',
     growth: { str: 3, vit: 2, dex: 1 },
-    skill: { name: 'ฟันสายฟ้า',     mp: 10, mult: 2.0, type: 'phys' } },
-  { id: 'gunslinger', name: 'มือปืนเงา',            emoji: '🔫',
-    desc: 'มือปืนระยะไกล — เน้น DEX ให้ยิงแม่น',
-    growth: { dex: 3, agi: 2, luk: 1 },
-    skill: { name: 'กระสุนเจาะ',     mp: 8,  mult: 1.7, type: 'phys' } },
-  { id: 'assassin',   name: 'อัสซาซิน',             emoji: '🗡️',
+    skill: { name: 'ฟันสายฟ้า',     mp: 10, mult: 2.0, type: 'phys' },
+    requiredRaceId: 'human' },
+  { id: 'priest',     name: 'นักบวช',              emoji: '✨',
+    desc: 'สาย support — ฟื้น HP/MP ให้ปาร์ตี้',
+    growth: { int: 3, dex: 2, luk: 1 },
+    skill: { name: 'บทเพลงสมาน',    mp: 12, mult: 0,   type: 'heal' },
+    requiredRaceId: 'human' },
+
+  // ─── สายมาร ───────────────────────────────────────────────────────
+  { id: 'assassin',   name: 'นักฆ่า',              emoji: '🗡️',
     desc: 'นักลอบสังหาร — ไว คริติคัล',
     growth: { agi: 3, luk: 2, str: 1 },
-    skill: { name: 'ลอบสังหาร',      mp: 8,  mult: 1.9, type: 'phys' } },
-  { id: 'heavenkn',   name: 'อัศวินสวรรค์',         emoji: '🛡️',
-    desc: 'อัศวินทนทาน — เน้น VIT ป้องกัน',
-    growth: { vit: 3, str: 2, dex: 1 },
-    skill: { name: 'ฟันศักดิ์สิทธิ์', mp: 10, mult: 1.8, type: 'holy' } },
-  { id: 'musician',   name: 'นักดนตรีศักดิ์สิทธิ์', emoji: '🎵',
-    desc: 'สาย support — INT สำหรับ MP, DEX สำหรับเล่นโน้ตแม่น',
-    growth: { int: 3, dex: 2, luk: 1 },
-    skill: { name: 'บทเพลงสมาน',    mp: 12, mult: 0,   type: 'heal' } },
-  { id: 'shaman',     name: 'ชาแมนเร้นลับ',         emoji: '🔮',
+    skill: { name: 'ลอบสังหาร',      mp: 8,  mult: 1.9, type: 'phys' },
+    requiredRaceId: 'mara' },
+  { id: 'shaman',     name: 'ชาแมน',                emoji: '🔮',
     desc: 'สายเวท — INT สูง mAtk แรง',
     growth: { int: 4, luk: 2 },
-    skill: { name: 'สายฟ้าโบราณ',    mp: 12, mult: 2.2, type: 'magic' } },
+    skill: { name: 'สายฟ้าโบราณ',    mp: 12, mult: 2.2, type: 'magic' },
+    requiredRaceId: 'mara' },
+
+  // ─── สายเทพ ───────────────────────────────────────────────────────
+  { id: 'heavenkn',   name: 'เฮเวลไนท์',           emoji: '🛡️',
+    desc: 'อัศวินทนทาน — เน้น VIT ป้องกัน',
+    growth: { vit: 3, str: 2, dex: 1 },
+    skill: { name: 'ฟันศักดิ์สิทธิ์', mp: 10, mult: 1.8, type: 'holy' },
+    requiredRaceId: 'god' },
+  { id: 'war-god',    name: 'เทพสงคราม',           emoji: '⚡',
+    desc: 'เทพแห่งสงคราม — STR + AGI ผสม',
+    growth: { str: 3, agi: 2, dex: 1 },
+    skill: { name: 'ฟ้าผ่าเทพ',      mp: 12, mult: 2.2, type: 'holy' },
+    requiredRaceId: 'god' },
+
+  // ─── deprecated (legacy save data — never offered in pickers) ─────
+  { id: 'berserk',    name: 'นักดาบเดือด',          emoji: '⚔️',
+    desc: '(legacy) ตัวเก่าใช้ — รวมเข้ากับ warrior ใน Slice 27',
+    growth: {}, skill: { name: 'ฟันสายฟ้า', mp: 10, mult: 2.0, type: 'phys' },
+    available: false },
+  { id: 'musician',   name: 'นักดนตรีศักดิ์สิทธิ์', emoji: '🎵',
+    desc: '(legacy) รวมเข้ากับ priest',
+    growth: {}, skill: { name: 'บทเพลงสมาน', mp: 12, mult: 0, type: 'heal' },
+    available: false },
+  { id: 'gunslinger', name: 'มือปืนเงา',            emoji: '🔫',
+    desc: '(legacy) ถูกถอดออก',
+    growth: {}, skill: { name: 'กระสุนเจาะ', mp: 8, mult: 1.7, type: 'phys' },
+    available: false },
 ]
 
 /** Slice 26: classes offered in the ClassChoiceModal (excludes the starter
@@ -116,8 +140,16 @@ export const AVAILABLE_CLASSES: CharClass[] = CLASSES.filter(
 )
 /** The starter class assigned at character creation (Slice 26). */
 export const STARTER_CLASS = CLASSES.find((c) => c.starter)!
-/** Lv at which the class-change quest unlocks (mirrors TRANSCEND_LV pattern). */
-export const CLASS_CHANGE_LV = 5
+/** Slice 27: class advance happens at Lv 120 (end-game tier-3 of the
+ *  unified class tree). Race choice still at Lv 10 via TRANSCEND_LV. */
+export const CLASS_CHANGE_LV = 120
+
+/** Slice 27 helper: classes a player with the given race can pick at the
+ *  Lv-120 class-change quest. Excludes starter + legacy + classes whose
+ *  requiredRaceId doesn't match. */
+export function classesForRace(raceId: string): CharClass[] {
+  return AVAILABLE_CLASSES.filter((c) => c.requiredRaceId === raceId)
+}
 
 export const ITEMS: Record<string, ItemDef> = {
   // Materials

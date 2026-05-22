@@ -43,9 +43,9 @@ export function CreateScreen() {
             อาชีพ <b>{STARTER_CLASS.name}</b> {STARTER_CLASS.emoji}
             <br />
             <span style={{ fontSize: 11 }}>
-              • Lv {CLASS_CHANGE_LV} → เควสเลือกอาชีพ (Berserk / Gunslinger / Assassin / Heaven Knight / Musician / Shaman)
+              • Lv {TRANSCEND_LV} → เลือกเผ่า (มนุษย์ / มาร / เทพ)
               <br />
-              • Lv {TRANSCEND_LV} → เควสเปลี่ยนเผ่า (มาร / เทพ)
+              • Lv {CLASS_CHANGE_LV} → เลือกอาชีพสุดท้าย (2 ตัวเลือกตามเผ่า)
             </span>
           </div>
         </div>
@@ -83,8 +83,9 @@ export function CreateScreen() {
             สมาชิกใหม่ของหมู่บ้าน — ไม่มีพรสวรรค์พิเศษ ไม่มีตำแหน่งสำคัญ
             เพียงสกิลพื้นฐาน <b>{STARTER_CLASS.skill.name}</b> และความตั้งใจที่จะเติบโต
             <br /><br />
-            ออกล่ามอนสเตอร์ในแมพข้างหมู่บ้านเก็บ EXP ถึง Lv {CLASS_CHANGE_LV}
-            แล้วเลือกเส้นทางอาชีพที่เหมาะกับวิธีเล่นของคุณ ทุกการตัดสินใจจะติดตัวคุณตลอด
+            ออกล่ามอนสเตอร์ในแมพข้างหมู่บ้านเก็บ EXP — ถึง Lv {TRANSCEND_LV}
+            จะได้เลือกเผ่า (มนุษย์ / มาร / เทพ) แล้วโตต่อจนถึง Lv {CLASS_CHANGE_LV}
+            เลือกอาชีพสุดท้าย (สายละ 2 อาชีพ) ทุกการตัดสินใจติดตัวคุณตลอด
           </div>
         </section>
       </div>

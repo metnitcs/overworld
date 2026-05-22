@@ -642,30 +642,32 @@ export const useGame = create<Store>()(
         }
         set({ game: g })
 
-        // Slice 26: Lv 5 class-change quest fires FIRST (lower threshold).
-        // Only one modal at a time — class change has priority since it
-        // unlocks first; race change waits its turn at Lv 10.
+        // Slice 17 / 27: Lv 10 race-change quest fires FIRST (lower threshold).
+        // Only one modal at a time — race choice comes before the Lv-120
+        // class choice in the progression tree.
         if (
-          cur.lv < CLASS_CHANGE_LV &&
-          g.lv >= CLASS_CHANGE_LV &&
-          !g.classChanged &&
-          get().modal === 'none' &&
-          get().screen === 'game'
-        ) {
-          get().log(`🎯 ได้เวลาเลือกอาชีพแล้ว! เลือกคลาสเฉพาะทาง`, 'good')
-          set({ modal: 'class-choice' })
-        }
-        // Slice 17: Lv 10 race-change quest. Fires the modal exactly once,
-        // when the player crosses the threshold for the first time.
-        else if (
           cur.lv < TRANSCEND_LV &&
           g.lv >= TRANSCEND_LV &&
           !g.transcended &&
           get().modal === 'none' &&
           get().screen === 'game'
         ) {
-          get().log(`✨ เผ่าของคุณกำลังตื่นขึ้น! ทำเควสเปลี่ยนเผ่าได้แล้ว`, 'good')
+          get().log(`✨ ได้เวลาเลือกเผ่าแล้ว! มนุษย์ / มาร / เทพ`, 'good')
           set({ modal: 'race-change' })
+        }
+        // Slice 26 / 27: Lv 120 class-change quest — endgame tier-3 choice.
+        // Only fires after the race quest (transcended=true) so the modal
+        // can filter classes by race; defensive guard checks transcended.
+        else if (
+          cur.lv < CLASS_CHANGE_LV &&
+          g.lv >= CLASS_CHANGE_LV &&
+          g.transcended &&
+          !g.classChanged &&
+          get().modal === 'none' &&
+          get().screen === 'game'
+        ) {
+          get().log(`🎯 ได้เวลาเลือกอาชีพสุดท้ายแล้ว!`, 'good')
+          set({ modal: 'class-choice' })
         }
       },
 

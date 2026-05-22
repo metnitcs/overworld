@@ -62,6 +62,11 @@ export interface CharClass {
   /** Slice 26: false = legacy class, kept so old saves still render but
    *  never offered in the ClassChoiceModal. Default treated as true. */
   available?: boolean
+  /** Slice 27: gates which advanced classes a player can pick at the
+   *  Lv-120 class-change quest. Set to the `raceId` of the tier-2 race
+   *  this class belongs to (human/mara/god). The starter `adventurer`
+   *  has no requirement. */
+  requiredRaceId?: string
 }
 
 export type MonsterRank = 'normal' | 'elite' | 'boss'

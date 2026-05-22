@@ -330,10 +330,12 @@ describe('POST /api/character/:id/transcend (Slice 17 race-change)', () => {
     expect(body.character.transcended).toBe(true)
   })
 
-  it('Slice 25 — shifts primary stats by the (newRace − oldRace) modifier diff', async () => {
-    // Starter race = human (no modifiers). Transcending to มาร (str+3 vit+2
-    // int-3 luk-2) on a fresh Lv-TRANSCEND_LV char with all stats at 10
-    // should bump str/vit and CLAMP int/luk at 10 (the floor).
+  it('Slice 25 + 27 — stat-shift plumbing still works; current race modifiers are all {} so no change', async () => {
+    // Slice 27: race no longer carries stat modifiers (all races = {}).
+    // The shiftRaceModifierDiff plumbing still runs on transcend but
+    // produces zero diff, so primary stats stay exactly as they were.
+    // (If we ever re-introduce race modifiers, this test should be
+    // updated to assert the new numbers.)
     const token = await registerAndGetToken('test_trans_shift')
     const id = await makeCharAtLv(token, 'Shifty', TRANSCEND_LV)
     const res = await app.inject({
@@ -343,10 +345,10 @@ describe('POST /api/character/:id/transcend (Slice 17 race-change)', () => {
     })
     expect(res.statusCode).toBe(200)
     const c = (res.json() as { character: Record<string, number> }).character
-    expect(c.str).toBe(13)            // 10 + 3
-    expect(c.vit).toBe(12)            // 10 + 2
-    expect(c.int).toBe(10)            // 10 - 3 → clamped to 10
-    expect(c.luk).toBe(10)            // 10 - 2 → clamped to 10
+    expect(c.str).toBe(10)
+    expect(c.vit).toBe(10)
+    expect(c.int).toBe(10)
+    expect(c.luk).toBe(10)
     expect(c.dex).toBe(10)
     expect(c.agi).toBe(10)
   })
@@ -390,31 +392,33 @@ describe('POST /api/character/:id/transcend (Slice 17 race-change)', () => {
   })
 })
 
-describe('POST /api/character/:id/change-class (Slice 26 starter-class flow)', () => {
-  async function makeFreshCharAtLv(token: string, name: string, lv: number) {
+describe('POST /api/character/:id/change-class (Slice 26 + 27 endgame class quest)', () => {
+  // Slice 27 raised CLASS_CHANGE_LV to 120 and gated each class behind a
+  // race. Test helper sets up the character at the required lv + race
+  // + classChanged: false so the endpoint is reachable.
+  async function makeReadyCharAt(token: string, name: string, raceId: string, lv = 120) {
     const created = await app.inject({
       method: 'POST', url: '/api/character', headers: { authorization: `Bearer ${token}` },
       payload: { name },
     })
     const id = (created.json() as { character: { id: string } }).character.id
-    if (lv > 1) {
-      // PUT with classChanged: false so the test exercises the "not yet
-      // class-changed" path (fixture defaults to classChanged: true).
-      await app.inject({
-        method: 'PUT', url: `/api/character/${id}`, headers: { authorization: `Bearer ${token}` },
-        payload: fullSaveBody({ lv, classChanged: false }),
-      })
-    }
+    await app.inject({
+      method: 'PUT', url: `/api/character/${id}`, headers: { authorization: `Bearer ${token}` },
+      payload: fullSaveBody({ lv, classChanged: false }),
+    })
+    // Force raceId via direct DB write (skips the transcend route's lv
+    // gate which would also block us if used here).
+    await prisma.character.update({ where: { id }, data: { raceId, transcended: true } })
     return id
   }
 
-  it('flips classId + classChanged=true at the threshold lv', async () => {
+  it('flips classId + classChanged=true at Lv 120 for a race-matched class', async () => {
     const token = await registerAndGetToken('test_cc_ok')
-    const id = await makeFreshCharAtLv(token, 'CC', 5)
+    const id = await makeReadyCharAt(token, 'CC', 'mara')
     const res = await app.inject({
       method: 'POST', url: `/api/character/${id}/change-class`,
       headers: { authorization: `Bearer ${token}` },
-      payload: { classId: 'shaman' },
+      payload: { classId: 'shaman' },  // shaman.requiredRaceId === 'mara' ✓
     })
     expect(res.statusCode).toBe(200)
     const body = res.json() as { character: { classId: string; classChanged: boolean } }
@@ -422,31 +426,36 @@ describe('POST /api/character/:id/change-class (Slice 26 starter-class flow)', (
     expect(body.character.classChanged).toBe(true)
   })
 
-  it('rejects below-threshold lv', async () => {
-    const token = await registerAndGetToken('test_cc_under')
-    // Lv 1 starter character — fixture sets classChanged TRUE on creation
-    // via the POST, but for THIS test we need it false. Easiest: POST then
-    // PUT with classChanged:false + lv:1.
-    const created = await app.inject({
-      method: 'POST', url: '/api/character', headers: { authorization: `Bearer ${token}` },
-      payload: { name: 'Young' },
-    })
-    const id = (created.json() as { character: { id: string } }).character.id
+  it('rejects class whose requiredRaceId does not match the player race', async () => {
+    // Slice 27: a มาร character can't pick warrior (a human class).
+    const token = await registerAndGetToken('test_cc_wrong_race')
+    const id = await makeReadyCharAt(token, 'Wrong', 'mara')
     const res = await app.inject({
       method: 'POST', url: `/api/character/${id}/change-class`,
       headers: { authorization: `Bearer ${token}` },
-      payload: { classId: 'berserk' },
+      payload: { classId: 'warrior' },  // warrior is human-only
+    })
+    expect(res.statusCode).toBe(400)
+  })
+
+  it('rejects below-threshold lv (must be Lv 120+)', async () => {
+    const token = await registerAndGetToken('test_cc_under')
+    const id = await makeReadyCharAt(token, 'Young', 'mara', /* lv */ 50)
+    const res = await app.inject({
+      method: 'POST', url: `/api/character/${id}/change-class`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { classId: 'shaman' },
     })
     expect(res.statusCode).toBe(409)
   })
 
   it('rejects a second change-class attempt', async () => {
     const token = await registerAndGetToken('test_cc_twice')
-    const id = await makeFreshCharAtLv(token, 'Twice', 5)
+    const id = await makeReadyCharAt(token, 'Twice', 'mara')
     await app.inject({
       method: 'POST', url: `/api/character/${id}/change-class`,
       headers: { authorization: `Bearer ${token}` },
-      payload: { classId: 'berserk' },
+      payload: { classId: 'assassin' },
     })
     const second = await app.inject({
       method: 'POST', url: `/api/character/${id}/change-class`,
@@ -458,7 +467,7 @@ describe('POST /api/character/:id/change-class (Slice 26 starter-class flow)', (
 
   it('rejects starter class as the picked class (must be an advanced class)', async () => {
     const token = await registerAndGetToken('test_cc_bad')
-    const id = await makeFreshCharAtLv(token, 'Bad', 5)
+    const id = await makeReadyCharAt(token, 'Bad', 'mara')
     const res = await app.inject({
       method: 'POST', url: `/api/character/${id}/change-class`,
       headers: { authorization: `Bearer ${token}` },

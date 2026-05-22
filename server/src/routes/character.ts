@@ -4,7 +4,7 @@ import type { Character, InventoryItem } from '@prisma/client'
 import {
   deriveStats, type GameState,
   STARTER_RACE, AVAILABLE_RACES, RACES, CHARACTER_SLOT_LIMIT, TRANSCEND_LV,
-  STARTER_CLASS, AVAILABLE_CLASSES, CLASS_CHANGE_LV,
+  STARTER_CLASS, AVAILABLE_CLASSES, CLASS_CHANGE_LV, classesForRace,
   STAT_BASE, STAT_HARD_CAP,
   spendPoints, resetStats,
   applyRaceModifiers, shiftRaceModifierDiff,
@@ -472,6 +472,14 @@ export function registerCharacterRoutes(app: FastifyInstance): void {
     }
     if (existing.lv < CLASS_CHANGE_LV) {
       return reply.code(409).send({ error: `must be Lv ${CLASS_CHANGE_LV}+ to change class` })
+    }
+    // Slice 27: the chosen class must be unlocked by the player's race
+    // (e.g. a มาร character can only pick assassin/shaman). The client
+    // already filters via classesForRace; the server re-validates so a
+    // crafted request can't bypass.
+    const allowed = classesForRace(existing.raceId)
+    if (!allowed.some((c) => c.id === classId)) {
+      return reply.code(400).send({ error: `class '${classId}' not allowed for race '${existing.raceId}'` })
     }
 
     const updated = await app.prisma.character.update({

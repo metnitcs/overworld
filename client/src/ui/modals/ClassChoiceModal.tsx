@@ -1,19 +1,22 @@
 import { useState } from 'react'
 import { useGame } from '../../game/store'
 import {
-  AVAILABLE_CLASSES, CLASS_CHANGE_LV,
+  classesForRace, CLASS_CHANGE_LV, RACES,
   type PrimaryStat, type StatModifier,
 } from '@asura/shared'
 
-/** Slice 26: Lv 5 class-change quest. Mirror of RaceChangeModal — fires
- *  once via store.gainExp when the player crosses CLASS_CHANGE_LV. The
- *  player MUST pick (no "close without choosing"). */
+/** Slice 26 → Slice 27: Lv 120 class-change quest. Only shows classes
+ *  whose `requiredRaceId` matches the player's chosen race (Lv 10
+ *  transcend). Mirror of RaceChangeModal — fires once via store.gainExp
+ *  when the player crosses CLASS_CHANGE_LV. The player MUST pick. */
 export function ClassChoiceModal() {
   const game = useGame((s) => s.game)
   const classChange = useGame((s) => s.classChange)
   const setModal = useGame((s) => s.setModal)
-  // Pre-select the first advanced class for snappy feel.
-  const [picked, setPicked] = useState<string>(AVAILABLE_CLASSES[0]?.id ?? '')
+  // Slice 27: filter to the 2 classes available for this player's race.
+  const choices = classesForRace(game.raceId)
+  const race = RACES.find((r) => r.id === game.raceId)
+  const [picked, setPicked] = useState<string>(choices[0]?.id ?? '')
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<string | null>(null)
 
@@ -32,14 +35,20 @@ export function ClassChoiceModal() {
   return (
     <div className="flex flex-col gap-3">
       <div className="text-xs text-kw-text-dim px-1">
-        <b className="text-kw-blue-deep">เควสเลือกอาชีพ (Lv {CLASS_CHANGE_LV})</b> —
-        เลือกอาชีพเฉพาะทางที่จะติดตัวคุณตลอด (เปลี่ยนได้ครั้งเดียว)
+        <b className="text-kw-blue-deep">เควสเลือกอาชีพสุดท้าย (Lv {CLASS_CHANGE_LV})</b>
+        {' — '}สาย <b>{race?.emoji} {race?.name}</b> ปลดล็อก 2 อาชีพนี้
+        เลือกหนึ่งที่จะติดตัวคุณตลอด (เปลี่ยนได้ครั้งเดียว)
         ตัวเลขด้านล่างคือ <b>growth weights</b> ที่แนะนำให้เทใส่ stats
         ตอน lv up — ไม่ได้ apply อัตโนมัติ ผู้เล่นเลือกเอง
       </div>
 
       <div className="space-y-2">
-        {AVAILABLE_CLASSES.map((c) => (
+        {choices.length === 0 && (
+          <div className="text-xs text-kw-red p-2 text-center">
+            ⚠ ไม่พบอาชีพสำหรับเผ่า "{game.raceId}" — แจ้ง admin
+          </div>
+        )}
+        {choices.map((c) => (
           <div
             key={c.id}
             className={`option-card ${picked === c.id ? 'selected' : ''}`}
@@ -70,7 +79,7 @@ export function ClassChoiceModal() {
         onClick={confirm}
         disabled={busy || !picked}
       >
-        {busy ? 'กำลังเปลี่ยน…' : `ยืนยันเป็น ${AVAILABLE_CLASSES.find((c) => c.id === picked)?.name ?? '?'}`}
+        {busy ? 'กำลังเปลี่ยน…' : `ยืนยันเป็น ${choices.find((c) => c.id === picked)?.name ?? '?'}`}
       </button>
     </div>
   )
