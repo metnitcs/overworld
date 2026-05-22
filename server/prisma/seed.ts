@@ -11,7 +11,7 @@ import {
   type Prisma,
 } from '@prisma/client'
 import {
-  ITEMS, MAPS, NPCS, RECIPES, makeLayout,
+  ITEMS, MAPS, NPCS, RECIPES, RACES, CLASSES, makeLayout,
   type MonsterDef, type MonsterDropDef, type TileDef, type TileKind,
 } from '@asura/shared'
 
@@ -270,6 +270,62 @@ async function seedRecipes(): Promise<{ recipes: number; mats: number }> {
   return { recipes: RECIPES.length, mats: matRows }
 }
 
+async function seedRaces(): Promise<number> {
+  for (const r of RACES) {
+    await prisma.race.upsert({
+      where: { id: r.id },
+      create: {
+        id: r.id,
+        name: r.name,
+        emoji: r.emoji,
+        desc: r.desc,
+        modifiers: r.modifiers as unknown as Prisma.InputJsonValue,
+        available: r.available ?? true,
+        starter: r.starter ?? false,
+      },
+      update: {
+        name: r.name,
+        emoji: r.emoji,
+        desc: r.desc,
+        modifiers: r.modifiers as unknown as Prisma.InputJsonValue,
+        available: r.available ?? true,
+        starter: r.starter ?? false,
+      },
+    })
+  }
+  return RACES.length
+}
+
+async function seedClasses(): Promise<number> {
+  for (const c of CLASSES) {
+    await prisma.charClass.upsert({
+      where: { id: c.id },
+      create: {
+        id: c.id,
+        name: c.name,
+        emoji: c.emoji,
+        desc: c.desc,
+        growth: c.growth as unknown as Prisma.InputJsonValue,
+        skill: c.skill as unknown as Prisma.InputJsonValue,
+        starter: c.starter ?? false,
+        available: c.available ?? true,
+        requiredRaceId: c.requiredRaceId ?? null,
+      },
+      update: {
+        name: c.name,
+        emoji: c.emoji,
+        desc: c.desc,
+        growth: c.growth as unknown as Prisma.InputJsonValue,
+        skill: c.skill as unknown as Prisma.InputJsonValue,
+        starter: c.starter ?? false,
+        available: c.available ?? true,
+        requiredRaceId: c.requiredRaceId ?? null,
+      },
+    })
+  }
+  return CLASSES.length
+}
+
 async function main(): Promise<void> {
   console.log('seeding content from shared/src/data.ts …')
   const itemCount = await seedItems()
@@ -282,6 +338,10 @@ async function main(): Promise<void> {
   console.log(`  ✓ npcs:     ${npcs} (${shopItems} ShopItem rows)`)
   const { recipes, mats } = await seedRecipes()
   console.log(`  ✓ recipes:  ${recipes} (${mats} RecipeMat rows)`)
+  const raceCount = await seedRaces()
+  console.log(`  ✓ races:    ${raceCount}`)
+  const classCount = await seedClasses()
+  console.log(`  ✓ classes:  ${classCount}`)
   console.log('done.')
 }
 

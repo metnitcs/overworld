@@ -1,5 +1,6 @@
 import type {
   GameState, ItemDef, MonsterDef, TileDef, WarpDef, NpcKind, ShopEntry, Recipe,
+  Race, CharClass,
 } from '@asura/shared'
 
 // Vite exposes VITE_* env vars at build time (see client/.env.example).
@@ -253,6 +254,10 @@ export interface ContentResponse {
   monsters: Record<string, MonsterDef>
   maps: Record<string, MapResponse>
   recipes: Recipe[]
+  /** Slice 28: races + classes moved to DB. Client UI reads from here
+   *  instead of importing the static RACES/CLASSES from @asura/shared. */
+  races: Race[]
+  classes: CharClass[]
 }
 
 /** Fields persisted via PUT — the GameState fields that are mutable in-game
@@ -354,6 +359,25 @@ export const api = {
 
   adminReloadCache: (token: string) =>
     request<{ ok: true }>('/api/admin/cache/reload', { method: 'POST', token }),
+
+  // ─── Slice 28: race + class admin CRUD ──────────────────────────────
+  adminListRaces: (token: string) =>
+    request<{ races: Race[] }>('/api/admin/races', { token }),
+  adminCreateRace: (token: string, body: Race) =>
+    request<{ race: Race }>('/api/admin/races', { method: 'POST', token, body }),
+  adminUpdateRace: (token: string, id: string, body: Omit<Race, 'id'>) =>
+    request<{ race: Race }>(`/api/admin/races/${id}`, { method: 'PUT', token, body }),
+  adminDeleteRace: (token: string, id: string) =>
+    request<{ ok: true }>(`/api/admin/races/${id}`, { method: 'DELETE', token }),
+
+  adminListClasses: (token: string) =>
+    request<{ classes: CharClass[] }>('/api/admin/classes', { token }),
+  adminCreateClass: (token: string, body: CharClass) =>
+    request<{ class: CharClass }>('/api/admin/classes', { method: 'POST', token, body }),
+  adminUpdateClass: (token: string, id: string, body: Omit<CharClass, 'id'>) =>
+    request<{ class: CharClass }>(`/api/admin/classes/${id}`, { method: 'PUT', token, body }),
+  adminDeleteClass: (token: string, id: string) =>
+    request<{ ok: true }>(`/api/admin/classes/${id}`, { method: 'DELETE', token }),
 
   /** Slice 21: file upload. Multipart POST. Returns the public `/uploads/...`
    *  path which the caller stores in Map.bgImage (or future Item/Monster art). */

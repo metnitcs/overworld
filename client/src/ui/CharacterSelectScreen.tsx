@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useGame } from '../game/store'
-import { RACES, CLASSES } from '@asura/shared'
+import { useRaces, useClasses } from '../game/store'
 
 /** Slice 16: character roster grid. Lands here after login when the player
  *  owns 1+ characters. Empty slots create new chars; filled slots can be
@@ -14,6 +14,8 @@ export function CharacterSelectScreen() {
   const logout = useGame((s) => s.logout)
   const username = useGame((s) => s.username)
   const role = useGame((s) => s.role)
+  const races = useRaces()
+  const classes = useClasses()
   const [deletingId, setDeletingId] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
@@ -100,8 +102,8 @@ export function CharacterSelectScreen() {
             )
           }
 
-          const race = RACES.find((r) => r.id === char.raceId)
-          const cls = CLASSES.find((c) => c.id === char.classId)
+          const race = races.find((r) => r.id === char.raceId)
+          const cls = classes.find((c) => c.id === char.classId)
           const isDeleting = deletingId === char.id
 
           return (

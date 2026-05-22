@@ -13,6 +13,8 @@ import type {
   ShopItem as PrismaShopItem,
   Recipe as PrismaRecipe,
   RecipeMat as PrismaRecipeMat,
+  Race as PrismaRace,
+  CharClass as PrismaCharClass,
 } from '@prisma/client'
 import type {
   ItemDef,
@@ -26,6 +28,10 @@ import type {
   NpcKind,
   ShopEntry,
   Recipe,
+  Race,
+  CharClass,
+  StatModifier,
+  Skill,
 } from '@asura/shared'
 
 /** NPC entry on the wire. Embeds the shop stock so the client doesn't need
@@ -73,6 +79,35 @@ export interface ContentBundle {
    *  legacy `Record<itemKey, qty>` shape so client code can drop in with
    *  zero changes. */
   recipes: Recipe[]
+  /** Slice 28: races + classes moved to DB so admin can edit them. */
+  races: Race[]
+  classes: CharClass[]
+}
+
+function toRace(row: PrismaRace): Race {
+  return {
+    id: row.id,
+    name: row.name,
+    emoji: row.emoji,
+    desc: row.desc,
+    modifiers: (row.modifiers as unknown as StatModifier) ?? {},
+    available: row.available,
+    starter: row.starter || undefined,
+  }
+}
+
+function toCharClass(row: PrismaCharClass): CharClass {
+  return {
+    id: row.id,
+    name: row.name,
+    emoji: row.emoji,
+    desc: row.desc,
+    growth: (row.growth as unknown as StatModifier) ?? {},
+    skill: row.skill as unknown as Skill,
+    starter: row.starter || undefined,
+    available: row.available,
+    requiredRaceId: row.requiredRaceId ?? undefined,
+  }
 }
 
 function toItemDef(row: PrismaItem): ItemDef {
@@ -181,7 +216,9 @@ export class ContentCache {
 
   async get(): Promise<ContentBundle> {
     if (this.bundle) return this.bundle
-    const [itemRows, monsterRows, mapRows, recipeRows] = await Promise.all([
+    const [
+      itemRows, monsterRows, mapRows, recipeRows, raceRows, classRows,
+    ] = await Promise.all([
       this.prisma.item.findMany(),
       this.prisma.monster.findMany({ include: { drops: true } }),
       this.prisma.map.findMany({
@@ -192,6 +229,8 @@ export class ContentCache {
         },
       }),
       this.prisma.recipe.findMany({ include: { mats: true } }),
+      this.prisma.race.findMany({ orderBy: { id: 'asc' } }),
+      this.prisma.charClass.findMany({ orderBy: { id: 'asc' } }),
     ])
     const items: Record<string, ItemDef> = {}
     for (const row of itemRows) items[row.id] = toItemDef(row)
@@ -200,8 +239,44 @@ export class ContentCache {
     const maps: Record<string, MapBundle> = {}
     for (const row of mapRows) maps[row.id] = toMapBundle(row)
     const recipes: Recipe[] = recipeRows.map(toRecipe)
-    this.bundle = { items, monsters, maps, recipes }
+    const races: Race[] = raceRows.map(toRace)
+    const classes: CharClass[] = classRows.map(toCharClass)
+    this.bundle = { items, monsters, maps, recipes, races, classes }
     return this.bundle
+  }
+
+  // ─── Slice 28 helpers: race + class lookups against the loaded bundle ─
+  // These mirror the static helpers from @asura/shared (STARTER_RACE,
+  // AVAILABLE_RACES, classesForRace) but read from the live DB cache so
+  // admin edits are picked up after invalidate().
+  async getStarterRace(): Promise<Race> {
+    const b = await this.get()
+    const r = b.races.find((x) => x.starter)
+    if (!r) throw new Error('no race marked starter in DB')
+    return r
+  }
+  async getStarterClass(): Promise<CharClass> {
+    const b = await this.get()
+    const c = b.classes.find((x) => x.starter)
+    if (!c) throw new Error('no class marked starter in DB')
+    return c
+  }
+  async getAvailableRaces(): Promise<Race[]> {
+    const b = await this.get()
+    return b.races.filter((r) => r.available)
+  }
+  async getAvailableClasses(): Promise<CharClass[]> {
+    const b = await this.get()
+    return b.classes.filter((c) => !c.starter && c.available)
+  }
+  /** Slice 27: classes a player with the given race can pick at Lv 120. */
+  async getClassesForRace(raceId: string): Promise<CharClass[]> {
+    const available = await this.getAvailableClasses()
+    return available.filter((c) => c.requiredRaceId === raceId)
+  }
+  async getRaceById(id: string): Promise<Race | undefined> {
+    const b = await this.get()
+    return b.races.find((r) => r.id === id)
   }
 
   /** Drop the cache; the next get() refreshes from DB. */

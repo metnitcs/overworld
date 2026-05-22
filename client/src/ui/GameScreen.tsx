@@ -3,7 +3,8 @@ import {
   useGame, seedChat,
   subscribeSaveStatus, getSaveStatus, type SaveStatus,
 } from '../game/store'
-import { RACES, CLASSES, expForLv } from '@asura/shared'
+import { expForLv } from '@asura/shared'
+import { useRaces, useClasses } from '../game/store'
 import { PhaserGame } from '../game/PhaserGame'
 import { ChatPanel } from './ChatPanel'
 
@@ -22,8 +23,10 @@ export function GameScreen() {
   // Map metadata comes from the content cache (ADR 0002). The App.tsx gate
   // guarantees `content` is non-null before any game screen renders.
   const mapInfo = useGame(s => s.content!.maps[s.game.map])
-  const race = RACES.find(r => r.id === game.raceId)!
-  const cls = CLASSES.find(c => c.id === game.classId)!
+  const races = useRaces()
+  const classes = useClasses()
+  const race = races.find(r => r.id === game.raceId)!
+  const cls = classes.find(c => c.id === game.classId)!
   const expNeed = expForLv(game.lv)
 
   // Mirror autosave status into local state so React rerenders the badge.

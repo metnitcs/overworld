@@ -1,5 +1,4 @@
-import { useGame } from '../../game/store'
-import { CLASSES } from '@asura/shared'
+import { useGame, useClasses } from '../../game/store'
 
 const COST = 500
 
@@ -7,6 +6,7 @@ export function ClassChangeModal() {
   const game = useGame(s => s.game)
   const changeClass = useGame(s => s.changeClass)
   const setModal = useGame(s => s.setModal)
+  const classes = useClasses()
 
   return (
     <div className="space-y-2">
@@ -14,7 +14,7 @@ export function ClassChangeModal() {
         เปลี่ยนอาชีพได้ทุกเวลา ใช้ 💰 <b className="text-kw-orange">{COST} ทอง</b>
       </div>
       <div className="grid grid-cols-2 gap-2">
-        {CLASSES.map(c => {
+        {classes.map(c => {
           const cur = c.id === game.classId
           return (
             <div key={c.id} className={`option-card ${cur ? 'selected' : ''}`}>

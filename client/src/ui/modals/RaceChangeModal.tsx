@@ -1,7 +1,7 @@
 import { useState } from 'react'
-import { useGame } from '../../game/store'
+import { useGame, useRaces, useAvailableRaces } from '../../game/store'
 import {
-  AVAILABLE_RACES, RACES, TRANSCEND_LV,
+  TRANSCEND_LV,
   type PrimaryStat, type StatModifier,
 } from '@asura/shared'
 
@@ -13,11 +13,13 @@ export function RaceChangeModal() {
   const game = useGame((s) => s.game)
   const transcend = useGame((s) => s.transcend)
   const setModal = useGame((s) => s.setModal)
+  const races = useRaces()
+  const availableRaces = useAvailableRaces()
   const [picked, setPicked] = useState<string>(game.raceId)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<string | null>(null)
 
-  const currentRace = RACES.find((r) => r.id === game.raceId)
+  const currentRace = races.find((r) => r.id === game.raceId)
   const currentMods = currentRace?.modifiers ?? {}
 
   async function confirm() {
@@ -43,7 +45,7 @@ export function RaceChangeModal() {
       </div>
 
       <div className="space-y-2">
-        {AVAILABLE_RACES.map((r) => (
+        {availableRaces.map((r) => (
           <div
             key={r.id}
             className={`option-card ${picked === r.id ? 'selected' : ''}`}
@@ -74,7 +76,7 @@ export function RaceChangeModal() {
         onClick={confirm}
         disabled={busy}
       >
-        {busy ? 'กำลังเปลี่ยน…' : `ยืนยันเป็น ${AVAILABLE_RACES.find((r) => r.id === picked)?.name ?? '?'}`}
+        {busy ? 'กำลังเปลี่ยน…' : `ยืนยันเป็น ${availableRaces.find((r) => r.id === picked)?.name ?? '?'}`}
       </button>
     </div>
   )

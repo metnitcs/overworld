@@ -101,6 +101,38 @@ model BattleLog {
 
 // ─── Content tables (ADR 0002: DB-authoritative, seeded from shared/src/data.ts) ───
 
+/// Slice 28: races and char-classes moved to DB so admin can edit them
+/// via UI. Seed copies the shared/data.ts defaults on first migration.
+model Race {
+  id        String  @id              // 'human', 'mara', 'god', etc.
+  name      String
+  emoji     String
+  desc      String
+  /// StatModifier: { str?, int?, dex?, agi?, luk?, vit? }. Slice 27
+  /// design ships all races at {} (no stat bonus from race choice).
+  modifiers Json
+  /// Offered in the Lv-10 race-change modal when true.
+  available Boolean @default(true)
+  /// Exactly one race should carry this flag (the auto-assigned starter).
+  starter   Boolean @default(false)
+}
+
+model CharClass {
+  id            String  @id          // 'adventurer', 'warrior', etc.
+  name          String
+  emoji         String
+  desc          String
+  /// StatModifier: growth recommendation weights (NOT auto-applied).
+  growth        Json
+  /// Skill: { name, mp, mult, type } — transitional, moves to Skill table later.
+  skill         Json
+  starter       Boolean @default(false)
+  available     Boolean @default(true)
+  /// Slice 27: gates which advanced classes appear in the Lv-120 quest
+  /// for a player with this raceId. Null for the starter class.
+  requiredRaceId String?
+}
+
 enum ItemType {
   mat
   consume

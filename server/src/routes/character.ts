@@ -3,13 +3,17 @@ import { z } from 'zod'
 import type { Character, InventoryItem } from '@prisma/client'
 import {
   deriveStats, type GameState,
-  STARTER_RACE, AVAILABLE_RACES, RACES, CHARACTER_SLOT_LIMIT, TRANSCEND_LV,
-  STARTER_CLASS, AVAILABLE_CLASSES, CLASS_CHANGE_LV, classesForRace,
+  CHARACTER_SLOT_LIMIT, TRANSCEND_LV,
+  CLASS_CHANGE_LV,
   STAT_BASE, STAT_HARD_CAP,
   spendPoints, resetStats,
   applyRaceModifiers, shiftRaceModifierDiff,
   type PrimaryStat,
 } from '@asura/shared'
+// Slice 28: race + class data lives in DB now (admin-editable). Server
+// reads it via app.contentCache instead of the static @asura/shared
+// imports. The shared package still ships RACES/CLASSES as the SEED
+// source — runtime always reads from cache so admin edits are live.
 
 const createSchema = z.object({
   name: z.string().min(1).max(40),
@@ -175,13 +179,16 @@ export function registerCharacterRoutes(app: FastifyInstance): void {
       })
     }
 
-    // Derive initial stats via the shared rules — starter race + class are
-    // both fixed. Slice 23: STAT_BASE in every primary stat, 0 unspent.
-    // Slice 25: apply starter race modifier. Slice 26: classId = STARTER_CLASS.
+    // Slice 28: race + class definitions come from the live DB cache so
+    // admin edits to "Adventurer" or "human" (e.g. tweak modifiers) take
+    // effect on next character creation without a deploy.
+    const starterRace = await app.contentCache.getStarterRace()
+    const starterClass = await app.contentCache.getStarterClass()
+
     const baseState: GameState = {
       name,
-      raceId: STARTER_RACE.id,
-      classId: STARTER_CLASS.id,
+      raceId: starterRace.id,
+      classId: starterClass.id,
       lv: 1, exp: 0,
       hp: 0, maxHp: 0, mp: 0, maxMp: 0,
       atk: 0, def: 0, spd: 0,
@@ -197,7 +204,7 @@ export function registerCharacterRoutes(app: FastifyInstance): void {
       transcended: false,
       classChanged: false,
     }
-    const withRace = applyRaceModifiers(baseState, STARTER_RACE.modifiers)
+    const withRace = applyRaceModifiers(baseState, starterRace.modifiers)
     const derived = deriveStats(withRace)
 
     const created = await app.prisma.character.create({
@@ -353,7 +360,8 @@ export function registerCharacterRoutes(app: FastifyInstance): void {
     const { id } = req.params as { id: string }
     const { raceId } = parsed.data
 
-    if (!AVAILABLE_RACES.some((r) => r.id === raceId)) {
+    const availableRaces = await app.contentCache.getAvailableRaces()
+    if (!availableRaces.some((r) => r.id === raceId)) {
       return reply.code(400).send({ error: 'raceId not allowed' })
     }
 
@@ -375,8 +383,9 @@ export function registerCharacterRoutes(app: FastifyInstance): void {
     // diff so the racial flavor follows the player without wiping their
     // hard-earned allocation. shiftRaceModifierDiff clamps each stat at
     // STAT_BASE so a strongly negative diff can't sink anyone below floor.
-    const oldRace = RACES.find((r) => r.id === existing.raceId)
-    const newRace = RACES.find((r) => r.id === raceId)
+    // Slice 28: race definitions live in DB now — look them up via cache.
+    const oldRace = await app.contentCache.getRaceById(existing.raceId)
+    const newRace = await app.contentCache.getRaceById(raceId)
     if (!newRace) {
       return reply.code(400).send({ error: 'raceId not found' })
     }
@@ -457,7 +466,8 @@ export function registerCharacterRoutes(app: FastifyInstance): void {
     const { id } = req.params as { id: string }
     const { classId } = parsed.data
 
-    if (!AVAILABLE_CLASSES.some((c) => c.id === classId)) {
+    const availableClasses = await app.contentCache.getAvailableClasses()
+    if (!availableClasses.some((c) => c.id === classId)) {
       return reply.code(400).send({ error: 'classId not allowed' })
     }
 
@@ -475,9 +485,9 @@ export function registerCharacterRoutes(app: FastifyInstance): void {
     }
     // Slice 27: the chosen class must be unlocked by the player's race
     // (e.g. a มาร character can only pick assassin/shaman). The client
-    // already filters via classesForRace; the server re-validates so a
-    // crafted request can't bypass.
-    const allowed = classesForRace(existing.raceId)
+    // already filters by race; the server re-validates so a crafted
+    // request can't bypass. Slice 28: read from DB cache.
+    const allowed = await app.contentCache.getClassesForRace(existing.raceId)
     if (!allowed.some((c) => c.id === classId)) {
       return reply.code(400).send({ error: `class '${classId}' not allowed for race '${existing.raceId}'` })
     }

@@ -1,6 +1,7 @@
 import Phaser from 'phaser'
 import { useGame } from '../store'
-import { RACES, CLASSES } from '@asura/shared'
+// Slice 28: race/class data lives in the live store cache, not the static
+// @asura/shared imports. Phaser scenes use useGame.getState() to read it.
 import { resolveAssetUrl } from '../../api/client'
 import {
   ATLASES, ASSET_KEYS, MAP_BASE_TILES, TILE_SPRITES,
@@ -380,8 +381,10 @@ export class MapScene extends Phaser.Scene {
     }
 
     // ───── Player visual (race sprite if available, else race emoji) ─────
-    const r = RACES.find(x => x.id === g.raceId)!
-    const c = CLASSES.find(x => x.id === g.classId)!
+    const races = useGame.getState().content?.races ?? []
+    const classes = useGame.getState().content?.classes ?? []
+    const r = races.find((x) => x.id === g.raceId)!
+    const c = classes.find((x) => x.id === g.classId)!
     this.swapPlayerVisual(g.raceId, r.emoji)
     this.classBadge.setText(c.emoji)
     this.movePlayerTo(g.px, g.py, true)

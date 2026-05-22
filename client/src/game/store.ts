@@ -14,9 +14,10 @@ import type {
   NpcKind,
   ShopEntry,
   Recipe,
+  Race,
+  CharClass,
 } from '@asura/shared'
 import {
-  CLASSES,
   deriveStats, applyExp, scaleEnemy, rollLoot, resolveEnhance, rollSpawns,
   rollEncounter,
   findPath, type PathStep,
@@ -30,6 +31,9 @@ interface ContentBundle {
   monsters: Record<string, MonsterDef>
   maps: Record<string, MapInfo>
   recipes: Recipe[]
+  /** Slice 28: races + classes moved to DB (admin-editable). */
+  races: Race[]
+  classes: CharClass[]
 }
 
 interface SpawnedMonster {
@@ -361,6 +365,8 @@ export const useGame = create<Store>()(
             monsters: r.monsters,
             maps: r.maps,
             recipes: r.recipes,
+            races: r.races,
+            classes: r.classes,
           },
         })
       },
@@ -485,7 +491,7 @@ export const useGame = create<Store>()(
         // skill's mp cost matters for derived display.
         set({ game: deriveStats(gameState) })
         await get().listCharacters()
-        const cls = CLASSES.find((c) => c.id === classId)
+        const cls = get().content?.classes.find((c) => c.id === classId)
         get().log(`🎯 เปลี่ยนคลาสเป็น ${cls?.name ?? classId}!`, 'good')
       },
 
@@ -989,7 +995,8 @@ export const useGame = create<Store>()(
         if (!get().spendGold(cost)) return false
         const g = { ...get().game, classId }
         set({ game: deriveStats(g) })
-        get().log(`🔄 เปลี่ยนอาชีพเป็น ${CLASSES.find(c => c.id === classId)!.name}`, 'good')
+        const newCls = get().content?.classes.find(c => c.id === classId)
+        get().log(`🔄 เปลี่ยนอาชีพเป็น ${newCls?.name ?? classId}`, 'good')
         return true
       },
 
@@ -1173,3 +1180,19 @@ export function flushSave(): void {
     keepalive: true,
   }).catch(() => { /* tab is unloading; nothing we can do */ })
 }
+
+// ─── Slice 28 selectors: race + class lookups from the live cache ───────
+// Replace the old static imports of RACES/CLASSES/AVAILABLE_* with these
+// hooks so admin edits show up immediately after `loadContent()`.
+// Defined AFTER useGame so the const reference resolves at evaluation time.
+export const useRaces = (): Race[] => useGame((s) => s.content?.races ?? [])
+export const useClasses = (): CharClass[] => useGame((s) => s.content?.classes ?? [])
+export const useAvailableRaces = (): Race[] =>
+  useGame((s) => (s.content?.races ?? []).filter((r) => r.available))
+export const useAvailableClasses = (): CharClass[] =>
+  useGame((s) => (s.content?.classes ?? []).filter((c) => !c.starter && c.available))
+/** Slice 27: classes available to a player with the given race at Lv 120. */
+export const useClassesForRace = (raceId: string): CharClass[] =>
+  useGame((s) => (s.content?.classes ?? [])
+    .filter((c) => !c.starter && c.available && c.requiredRaceId === raceId),
+  )

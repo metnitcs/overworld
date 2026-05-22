@@ -1,7 +1,7 @@
 import { useState } from 'react'
-import { useGame } from '../../game/store'
+import { useGame, useRaces, useClassesForRace } from '../../game/store'
 import {
-  classesForRace, CLASS_CHANGE_LV, RACES,
+  CLASS_CHANGE_LV,
   type PrimaryStat, type StatModifier,
 } from '@asura/shared'
 
@@ -13,9 +13,11 @@ export function ClassChoiceModal() {
   const game = useGame((s) => s.game)
   const classChange = useGame((s) => s.classChange)
   const setModal = useGame((s) => s.setModal)
-  // Slice 27: filter to the 2 classes available for this player's race.
-  const choices = classesForRace(game.raceId)
-  const race = RACES.find((r) => r.id === game.raceId)
+  // Slice 27 + 28: filter to the 2 classes available for this player's
+  // race, reading from the live DB cache (admin edits show up here).
+  const choices = useClassesForRace(game.raceId)
+  const races = useRaces()
+  const race = races.find((r) => r.id === game.raceId)
   const [picked, setPicked] = useState<string>(choices[0]?.id ?? '')
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<string | null>(null)

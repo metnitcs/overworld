@@ -8,16 +8,19 @@ import {
   type AdminMapRow, type AdminMapBody, type AdminTile, type AdminMapMonsterEntry,
   type AdminWarpEntry,
 } from '../api/client'
+import type { Race, CharClass, StatModifier, Skill, SkillType, PrimaryStat } from '@asura/shared'
 
 /** Slice 20 + 22 — in-game L3 admin dashboard. Gated by role === 'ADMIN'.
  *  All visual styling is namespaced under `.admin-shell` in index.css so it
  *  doesn't fight with the kawaii pre-game palette. */
-type Tab = 'items' | 'monsters' | 'maps' | 'characters' | 'cache'
+type Tab = 'items' | 'monsters' | 'maps' | 'races' | 'classes' | 'characters' | 'cache'
 
 interface CountState {
   items?: number
   monsters?: number
   maps?: number
+  races?: number
+  classes?: number
   characters?: number
 }
 
@@ -74,6 +77,8 @@ export function AdminScreen() {
           {tab === 'items' && <ItemsTab onCount={(n) => setCounts((c) => ({ ...c, items: n }))} />}
           {tab === 'monsters' && <MonstersTab onCount={(n) => setCounts((c) => ({ ...c, monsters: n }))} />}
           {tab === 'maps' && <MapsTab onCount={(n) => setCounts((c) => ({ ...c, maps: n }))} />}
+          {tab === 'races' && <RacesTab onCount={(n) => setCounts((c) => ({ ...c, races: n }))} />}
+          {tab === 'classes' && <ClassesTab onCount={(n) => setCounts((c) => ({ ...c, classes: n }))} />}
           {tab === 'characters' && <CharactersTab onCount={(n) => setCounts((c) => ({ ...c, characters: n }))} />}
           {tab === 'cache' && <CacheTab />}
         </div>
@@ -91,13 +96,15 @@ function Sidebar({ tab, setTab, counts }: {
     { id: 'items',      label: 'ไอเทม',          icon: '🎒', count: counts.items },
     { id: 'monsters',   label: 'มอนสเตอร์',       icon: '👹', count: counts.monsters },
     { id: 'maps',       label: 'แผนที่',          icon: '🗺',  count: counts.maps },
+    { id: 'races',      label: 'เผ่า',            icon: '🧬', count: counts.races },
+    { id: 'classes',    label: 'อาชีพ',           icon: '⚔️', count: counts.classes },
     { id: 'characters', label: 'ตัวละครผู้เล่น',  icon: '🧝', count: counts.characters },
     { id: 'cache',      label: 'แคช / รีโหลด',    icon: '♻️' },
   ]
   return (
     <div className="admin-sidebar">
       <div className="sidebar-label">Content</div>
-      {items.slice(0, 4).map((it) => (
+      {items.slice(0, 6).map((it) => (
         <button
           key={it.id}
           className={`admin-nav-item${tab === it.id ? ' active' : ''}`}
@@ -109,7 +116,7 @@ function Sidebar({ tab, setTab, counts }: {
         </button>
       ))}
       <div className="sidebar-label" style={{ marginTop: 12 }}>System</div>
-      {items.slice(4).map((it) => (
+      {items.slice(6).map((it) => (
         <button
           key={it.id}
           className={`admin-nav-item${tab === it.id ? ' active' : ''}`}
@@ -1333,5 +1340,376 @@ function CacheTab() {
         {busy ? '⏳ กำลังรีโหลด…' : '♻️ Force reload server + client cache'}
       </button>
     </div>
+  )
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Slice 28 — Races tab
+// ═══════════════════════════════════════════════════════════════════════
+
+const STATS_ORDER_ADMIN: PrimaryStat[] = ['str', 'int', 'dex', 'agi', 'luk', 'vit']
+
+function RacesTab({ onCount }: { onCount: (n: number) => void }) {
+  const token = useToken()
+  const [races, setRaces] = useState<Race[] | null>(null)
+  const [editing, setEditing] = useState<Race | null>(null)
+  const [creating, setCreating] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
+  const [ok, setOk] = useState<string | null>(null)
+
+  async function load() {
+    const r = await api.adminListRaces(token)
+    setRaces(r.races); onCount(r.races.length)
+  }
+  useEffect(() => { void load() }, [])
+
+  async function save(body: Omit<Race, 'id'>, id: string) {
+    setErr(null); setOk(null)
+    try { await api.adminUpdateRace(token, id, body); setOk(`บันทึก ${id}`); setEditing(null); await load() }
+    catch (e) { setErr(e instanceof ApiError ? `${e.status}: ${JSON.stringify(e.body)}` : String(e)) }
+  }
+  async function create(body: Race) {
+    setErr(null); setOk(null)
+    try { await api.adminCreateRace(token, body); setOk(`สร้าง ${body.id}`); setCreating(false); await load() }
+    catch (e) { setErr(e instanceof ApiError ? `${e.status}: ${JSON.stringify(e.body)}` : String(e)) }
+  }
+  async function remove(id: string) {
+    if (!confirm(`ลบ race ${id}? ตัวละครที่ราคา id นี้จะ raceId ค้าง`)) return
+    setErr(null); setOk(null)
+    try { await api.adminDeleteRace(token, id); setOk(`ลบ ${id}`); await load() }
+    catch (e) { setErr(e instanceof ApiError ? `${e.status}: ${JSON.stringify(e.body)}` : String(e)) }
+  }
+
+  if (!races) return <div className="admin-loading">กำลังโหลด…</div>
+
+  return (
+    <div>
+      <PageHead title="เผ่า (Race)"
+        desc={`${races.length} เผ่า — ตัวเลือก Tier-2 ของ class tree (Lv 10 quest)`}
+        right={<button className="btn-a btn-a-primary" onClick={() => setCreating(true)}>+ สร้างใหม่</button>} />
+      {ok && <Toast msg={ok} kind="ok" />}
+      {err && <Toast msg={err} kind="err" />}
+
+      {creating && (
+        <RaceForm mode="create" initial={null}
+          onCancel={() => setCreating(false)}
+          onSubmit={(b) => create(b as Race)} />
+      )}
+      {editing && (
+        <RaceForm mode="edit" initial={editing}
+          onCancel={() => setEditing(null)}
+          onSubmit={(b) => save(b, editing.id)} />
+      )}
+
+      <div className="admin-card">
+        {races.length === 0 ? <Empty icon="🧬" title="ยังไม่มี race" /> : (
+          <table className="admin-table">
+            <thead>
+              <tr><th>ID</th><th>Name</th><th>Modifiers</th><th>Flags</th><th></th></tr>
+            </thead>
+            <tbody>
+              {races.map((r) => {
+                const mods = STATS_ORDER_ADMIN
+                  .map((k) => [k, r.modifiers[k] ?? 0] as const)
+                  .filter(([, v]) => v !== 0)
+                return (
+                  <tr key={r.id}>
+                    <td><span className="id-mono">{r.id}</span></td>
+                    <td><span style={{ fontSize: 16, marginRight: 6 }}>{r.emoji}</span>{r.name}</td>
+                    <td style={{ fontSize: 13, color: '#6b7280' }}>
+                      {mods.length === 0 ? '—' :
+                        mods.map(([k, v]) => `${k.toUpperCase()} ${v > 0 ? '+' : ''}${v}`).join(' · ')}
+                    </td>
+                    <td>
+                      {r.starter && <span className="pill pill-green">starter</span>}
+                      {!r.available && <span className="pill pill-gray" style={{ marginLeft: 4 }}>legacy</span>}
+                    </td>
+                    <td className="row-actions">
+                      <button className="btn-a btn-a-small" onClick={() => setEditing(r)}>แก้</button>
+                      <button className="btn-a btn-a-small btn-a-danger" onClick={() => remove(r.id)} style={{ marginLeft: 4 }}>ลบ</button>
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function RaceForm({ mode, initial, onSubmit, onCancel }: {
+  mode: 'create' | 'edit'
+  initial: Race | null
+  onSubmit: (body: Race | Omit<Race, 'id'>) => void
+  onCancel: () => void
+}) {
+  const [id, setId] = useState(initial?.id ?? '')
+  const [name, setName] = useState(initial?.name ?? '')
+  const [emoji, setEmoji] = useState(initial?.emoji ?? '🧬')
+  const [desc, setDesc] = useState(initial?.desc ?? '')
+  const [mods, setMods] = useState<StatModifier>(initial?.modifiers ?? {})
+  const [available, setAvailable] = useState(initial?.available ?? true)
+  const [starter, setStarter] = useState(initial?.starter ?? false)
+
+  function setMod(k: PrimaryStat, v: string) {
+    const n = v === '' ? undefined : Number(v)
+    setMods((cur) => ({ ...cur, [k]: n }))
+  }
+
+  function submit(e: React.FormEvent) {
+    e.preventDefault()
+    const body = { name, emoji, desc, modifiers: mods, available, starter }
+    if (mode === 'create') onSubmit({ id: id.trim(), ...body })
+    else onSubmit(body)
+  }
+
+  return (
+    <form onSubmit={submit} className="admin-form">
+      <div className="admin-form-title">
+        {mode === 'create' ? '✨ สร้าง Race ใหม่' : `✏️ แก้ Race: ${initial?.id}`}
+      </div>
+      <div className="admin-form-row" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
+        {mode === 'create' && (
+          <Field label="ID (kebab-case)">
+            <input value={id} onChange={(e) => setId(e.target.value)} required pattern="[a-z0-9-]+" />
+          </Field>
+        )}
+        <Field label="Name"><input value={name} onChange={(e) => setName(e.target.value)} required /></Field>
+        <Field label="Emoji"><input value={emoji} onChange={(e) => setEmoji(e.target.value)} required /></Field>
+      </div>
+      <Field label="Description">
+        <textarea value={desc} onChange={(e) => setDesc(e.target.value)} rows={2} style={{ resize: 'vertical' }} />
+      </Field>
+
+      <div style={{ marginTop: 12, fontWeight: 600, fontSize: 14 }}>Stat modifiers (ปล่อยว่าง = 0)</div>
+      <div className="admin-form-row" style={{ gridTemplateColumns: 'repeat(6, 1fr)' }}>
+        {STATS_ORDER_ADMIN.map((k) => (
+          <Field key={k} label={k.toUpperCase()}>
+            <input type="number" value={mods[k] ?? ''}
+              onChange={(e) => setMod(k, e.target.value)} placeholder="0" />
+          </Field>
+        ))}
+      </div>
+
+      <div style={{ marginTop: 12, display: 'flex', gap: 16 }}>
+        <label style={{ fontSize: 13 }}>
+          <input type="checkbox" checked={available} onChange={(e) => setAvailable(e.target.checked)} />
+          {' '}available (โผล่ใน picker)
+        </label>
+        <label style={{ fontSize: 13 }}>
+          <input type="checkbox" checked={starter} onChange={(e) => setStarter(e.target.checked)} />
+          {' '}starter (race อัตโนมัติตอนสร้าง)
+        </label>
+      </div>
+
+      <div className="admin-form-foot">
+        <button type="button" className="btn-a" onClick={onCancel}>ยกเลิก</button>
+        <button type="submit" className="btn-a btn-a-primary">บันทึก</button>
+      </div>
+    </form>
+  )
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Slice 28 — Classes tab
+// ═══════════════════════════════════════════════════════════════════════
+
+const SKILL_TYPES: SkillType[] = ['phys', 'magic', 'heal', 'holy']
+
+function ClassesTab({ onCount }: { onCount: (n: number) => void }) {
+  const token = useToken()
+  const [classes, setClasses] = useState<CharClass[] | null>(null)
+  const [races, setRaces] = useState<Race[] | null>(null)
+  const [editing, setEditing] = useState<CharClass | null>(null)
+  const [creating, setCreating] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
+  const [ok, setOk] = useState<string | null>(null)
+
+  async function load() {
+    const [c, r] = await Promise.all([api.adminListClasses(token), api.adminListRaces(token)])
+    setClasses(c.classes); setRaces(r.races); onCount(c.classes.length)
+  }
+  useEffect(() => { void load() }, [])
+
+  async function save(body: Omit<CharClass, 'id'>, id: string) {
+    setErr(null); setOk(null)
+    try { await api.adminUpdateClass(token, id, body); setOk(`บันทึก ${id}`); setEditing(null); await load() }
+    catch (e) { setErr(e instanceof ApiError ? `${e.status}: ${JSON.stringify(e.body)}` : String(e)) }
+  }
+  async function create(body: CharClass) {
+    setErr(null); setOk(null)
+    try { await api.adminCreateClass(token, body); setOk(`สร้าง ${body.id}`); setCreating(false); await load() }
+    catch (e) { setErr(e instanceof ApiError ? `${e.status}: ${JSON.stringify(e.body)}` : String(e)) }
+  }
+  async function remove(id: string) {
+    if (!confirm(`ลบ class ${id}? ตัวละครที่ classId นี้จะ id ค้าง`)) return
+    setErr(null); setOk(null)
+    try { await api.adminDeleteClass(token, id); setOk(`ลบ ${id}`); await load() }
+    catch (e) { setErr(e instanceof ApiError ? `${e.status}: ${JSON.stringify(e.body)}` : String(e)) }
+  }
+
+  if (!classes || !races) return <div className="admin-loading">กำลังโหลด…</div>
+
+  return (
+    <div>
+      <PageHead title="อาชีพ (Class)"
+        desc={`${classes.length} class — Tier-3 ของ class tree (Lv 120 quest, gated โดย requiredRaceId)`}
+        right={<button className="btn-a btn-a-primary" onClick={() => setCreating(true)}>+ สร้างใหม่</button>} />
+      {ok && <Toast msg={ok} kind="ok" />}
+      {err && <Toast msg={err} kind="err" />}
+
+      {creating && (
+        <ClassForm mode="create" initial={null} races={races}
+          onCancel={() => setCreating(false)}
+          onSubmit={(b) => create(b as CharClass)} />
+      )}
+      {editing && (
+        <ClassForm mode="edit" initial={editing} races={races}
+          onCancel={() => setEditing(null)}
+          onSubmit={(b) => save(b, editing.id)} />
+      )}
+
+      <div className="admin-card">
+        {classes.length === 0 ? <Empty icon="⚔️" title="ยังไม่มี class" /> : (
+          <table className="admin-table">
+            <thead>
+              <tr><th>ID</th><th>Name</th><th>Race</th><th>Skill</th><th>Growth</th><th>Flags</th><th></th></tr>
+            </thead>
+            <tbody>
+              {classes.map((c) => {
+                const growth = STATS_ORDER_ADMIN
+                  .map((k) => [k, c.growth[k] ?? 0] as const)
+                  .filter(([, v]) => v > 0)
+                  .sort((a, b) => b[1] - a[1])
+                return (
+                  <tr key={c.id}>
+                    <td><span className="id-mono">{c.id}</span></td>
+                    <td><span style={{ fontSize: 16, marginRight: 6 }}>{c.emoji}</span>{c.name}</td>
+                    <td style={{ fontSize: 13, color: '#6b7280' }}>{c.requiredRaceId ?? '—'}</td>
+                    <td style={{ fontSize: 13, color: '#6b7280' }}>{c.skill.name} ({c.skill.type} ×{c.skill.mult})</td>
+                    <td style={{ fontSize: 13, color: '#6b7280' }}>
+                      {growth.length === 0 ? '—' :
+                        growth.map(([k, v]) => `${k.toUpperCase()}×${v}`).join(' / ')}
+                    </td>
+                    <td>
+                      {c.starter && <span className="pill pill-green">starter</span>}
+                      {!c.available && <span className="pill pill-gray" style={{ marginLeft: 4 }}>legacy</span>}
+                    </td>
+                    <td className="row-actions">
+                      <button className="btn-a btn-a-small" onClick={() => setEditing(c)}>แก้</button>
+                      <button className="btn-a btn-a-small btn-a-danger" onClick={() => remove(c.id)} style={{ marginLeft: 4 }}>ลบ</button>
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function ClassForm({ mode, initial, races, onSubmit, onCancel }: {
+  mode: 'create' | 'edit'
+  initial: CharClass | null
+  races: Race[]
+  onSubmit: (body: CharClass | Omit<CharClass, 'id'>) => void
+  onCancel: () => void
+}) {
+  const [id, setId] = useState(initial?.id ?? '')
+  const [name, setName] = useState(initial?.name ?? '')
+  const [emoji, setEmoji] = useState(initial?.emoji ?? '⚔️')
+  const [desc, setDesc] = useState(initial?.desc ?? '')
+  const [growth, setGrowth] = useState<StatModifier>(initial?.growth ?? {})
+  const [skill, setSkill] = useState<Skill>(initial?.skill ?? {
+    name: '', mp: 0, mult: 1, type: 'phys',
+  })
+  const [starter, setStarter] = useState(initial?.starter ?? false)
+  const [available, setAvailable] = useState(initial?.available ?? true)
+  const [requiredRaceId, setRequiredRaceId] = useState(initial?.requiredRaceId ?? '')
+
+  function setGrowthVal(k: PrimaryStat, v: string) {
+    const n = v === '' ? undefined : Number(v)
+    setGrowth((cur) => ({ ...cur, [k]: n }))
+  }
+
+  function submit(e: React.FormEvent) {
+    e.preventDefault()
+    const body = {
+      name, emoji, desc, growth, skill,
+      starter, available,
+      requiredRaceId: requiredRaceId === '' ? undefined : requiredRaceId,
+    }
+    if (mode === 'create') onSubmit({ id: id.trim(), ...body })
+    else onSubmit(body)
+  }
+
+  return (
+    <form onSubmit={submit} className="admin-form">
+      <div className="admin-form-title">
+        {mode === 'create' ? '✨ สร้าง Class ใหม่' : `✏️ แก้ Class: ${initial?.id}`}
+      </div>
+      <div className="admin-form-row" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
+        {mode === 'create' && (
+          <Field label="ID (kebab-case)">
+            <input value={id} onChange={(e) => setId(e.target.value)} required pattern="[a-z0-9-]+" />
+          </Field>
+        )}
+        <Field label="Name"><input value={name} onChange={(e) => setName(e.target.value)} required /></Field>
+        <Field label="Emoji"><input value={emoji} onChange={(e) => setEmoji(e.target.value)} required /></Field>
+        <Field label="Required Race (Lv 120 gate)">
+          <select value={requiredRaceId} onChange={(e) => setRequiredRaceId(e.target.value)}>
+            <option value="">(none — starter / cross-race)</option>
+            {races.filter((r) => r.available).map((r) => (
+              <option key={r.id} value={r.id}>{r.emoji} {r.id} — {r.name}</option>
+            ))}
+          </select>
+        </Field>
+      </div>
+      <Field label="Description">
+        <textarea value={desc} onChange={(e) => setDesc(e.target.value)} rows={2} style={{ resize: 'vertical' }} />
+      </Field>
+
+      <div style={{ marginTop: 12, fontWeight: 600, fontSize: 14 }}>Growth weights (แนะนำการเทใส่ stats)</div>
+      <div className="admin-form-row" style={{ gridTemplateColumns: 'repeat(6, 1fr)' }}>
+        {STATS_ORDER_ADMIN.map((k) => (
+          <Field key={k} label={k.toUpperCase()}>
+            <input type="number" value={growth[k] ?? ''}
+              onChange={(e) => setGrowthVal(k, e.target.value)} placeholder="0" />
+          </Field>
+        ))}
+      </div>
+
+      <div style={{ marginTop: 12, fontWeight: 600, fontSize: 14 }}>Skill</div>
+      <div className="admin-form-row" style={{ gridTemplateColumns: '2fr 1fr 1fr 1fr' }}>
+        <Field label="Name"><input value={skill.name} onChange={(e) => setSkill({ ...skill, name: e.target.value })} /></Field>
+        <Field label="MP cost"><input type="number" value={skill.mp} onChange={(e) => setSkill({ ...skill, mp: Number(e.target.value) })} /></Field>
+        <Field label="Multiplier"><input type="number" step="0.1" value={skill.mult} onChange={(e) => setSkill({ ...skill, mult: Number(e.target.value) })} /></Field>
+        <Field label="Type">
+          <select value={skill.type} onChange={(e) => setSkill({ ...skill, type: e.target.value as SkillType })}>
+            {SKILL_TYPES.map((t) => <option key={t}>{t}</option>)}
+          </select>
+        </Field>
+      </div>
+
+      <div style={{ marginTop: 12, display: 'flex', gap: 16 }}>
+        <label style={{ fontSize: 13 }}>
+          <input type="checkbox" checked={available} onChange={(e) => setAvailable(e.target.checked)} />
+          {' '}available
+        </label>
+        <label style={{ fontSize: 13 }}>
+          <input type="checkbox" checked={starter} onChange={(e) => setStarter(e.target.checked)} />
+          {' '}starter (Lv 1 class)
+        </label>
+      </div>
+
+      <div className="admin-form-foot">
+        <button type="button" className="btn-a" onClick={onCancel}>ยกเลิก</button>
+        <button type="submit" className="btn-a btn-a-primary">บันทึก</button>
+      </div>
+    </form>
   )
 }

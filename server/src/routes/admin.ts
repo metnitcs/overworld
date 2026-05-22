@@ -94,6 +94,51 @@ const mapCreateBody = mapBody.extend({
   id: z.string().min(1).regex(/^[a-z0-9-]+$/, 'lowercase-kebab-case only'),
 })
 
+// ─── Slice 28: Race + CharClass schemas ─────────────────────────────
+const statModifierSchema = z.object({
+  str: z.number().int().optional(),
+  int: z.number().int().optional(),
+  dex: z.number().int().optional(),
+  agi: z.number().int().optional(),
+  luk: z.number().int().optional(),
+  vit: z.number().int().optional(),
+})
+
+const raceBody = z.object({
+  name: z.string().min(1),
+  emoji: z.string().min(1),
+  desc: z.string(),
+  modifiers: statModifierSchema,
+  available: z.boolean().optional().default(true),
+  starter: z.boolean().optional().default(false),
+})
+
+const raceCreateBody = raceBody.extend({
+  id: z.string().min(1).regex(/^[a-z0-9-]+$/, 'lowercase-kebab-case only'),
+})
+
+const skillSchema = z.object({
+  name: z.string(),
+  mp: z.number().int().min(0),
+  mult: z.number(),
+  type: z.enum(['phys', 'magic', 'heal', 'holy']),
+})
+
+const classBody = z.object({
+  name: z.string().min(1),
+  emoji: z.string().min(1),
+  desc: z.string(),
+  growth: statModifierSchema,
+  skill: skillSchema,
+  starter: z.boolean().optional().default(false),
+  available: z.boolean().optional().default(true),
+  requiredRaceId: z.string().nullable().optional(),
+})
+
+const classCreateBody = classBody.extend({
+  id: z.string().min(1).regex(/^[a-z0-9-]+$/, 'lowercase-kebab-case only'),
+})
+
 const characterPatch = z.object({
   lv: z.number().int().min(1).optional(),
   exp: z.number().int().min(0).optional(),
@@ -376,6 +421,101 @@ export function registerAdminRoutes(app: FastifyInstance): void {
     } catch {
       return reply.code(409).send({ error: 'map is referenced by warps or characters' })
     }
+    app.contentCache.invalidate()
+    return reply.send({ ok: true })
+  })
+
+  // ── Races (Slice 28) ──
+  app.get('/api/admin/races', guard, async (_req, reply) => {
+    const races = await app.prisma.race.findMany({ orderBy: { id: 'asc' } })
+    return reply.send({ races })
+  })
+
+  app.post('/api/admin/races', guard, async (req, reply) => {
+    const parsed = raceCreateBody.safeParse(req.body)
+    if (!parsed.success) return reply.code(400).send({ error: 'invalid input', issues: parsed.error.issues })
+    const exists = await app.prisma.race.findUnique({ where: { id: parsed.data.id } })
+    if (exists) return reply.code(409).send({ error: 'race id already exists' })
+    const { modifiers, ...rest } = parsed.data
+    const created = await app.prisma.race.create({
+      data: { ...rest, modifiers: modifiers as unknown as object },
+    })
+    app.contentCache.invalidate()
+    return reply.code(201).send({ race: created })
+  })
+
+  app.put('/api/admin/races/:id', guard, async (req, reply) => {
+    const parsed = raceBody.safeParse(req.body)
+    if (!parsed.success) return reply.code(400).send({ error: 'invalid input', issues: parsed.error.issues })
+    const { id } = req.params as { id: string }
+    const exists = await app.prisma.race.findUnique({ where: { id } })
+    if (!exists) return reply.code(404).send({ error: 'race not found' })
+    const { modifiers, ...rest } = parsed.data
+    const updated = await app.prisma.race.update({
+      where: { id }, data: { ...rest, modifiers: modifiers as unknown as object },
+    })
+    app.contentCache.invalidate()
+    return reply.send({ race: updated })
+  })
+
+  app.delete('/api/admin/races/:id', guard, async (req, reply) => {
+    const { id } = req.params as { id: string }
+    const exists = await app.prisma.race.findUnique({ where: { id } })
+    if (!exists) return reply.code(404).send({ error: 'race not found' })
+    await app.prisma.race.delete({ where: { id } })
+    app.contentCache.invalidate()
+    return reply.send({ ok: true })
+  })
+
+  // ── CharClasses (Slice 28) ──
+  app.get('/api/admin/classes', guard, async (_req, reply) => {
+    const classes = await app.prisma.charClass.findMany({ orderBy: { id: 'asc' } })
+    return reply.send({ classes })
+  })
+
+  app.post('/api/admin/classes', guard, async (req, reply) => {
+    const parsed = classCreateBody.safeParse(req.body)
+    if (!parsed.success) return reply.code(400).send({ error: 'invalid input', issues: parsed.error.issues })
+    const exists = await app.prisma.charClass.findUnique({ where: { id: parsed.data.id } })
+    if (exists) return reply.code(409).send({ error: 'class id already exists' })
+    const { growth, skill, requiredRaceId, ...rest } = parsed.data
+    const created = await app.prisma.charClass.create({
+      data: {
+        ...rest,
+        growth: growth as unknown as object,
+        skill: skill as unknown as object,
+        requiredRaceId: requiredRaceId ?? null,
+      },
+    })
+    app.contentCache.invalidate()
+    return reply.code(201).send({ class: created })
+  })
+
+  app.put('/api/admin/classes/:id', guard, async (req, reply) => {
+    const parsed = classBody.safeParse(req.body)
+    if (!parsed.success) return reply.code(400).send({ error: 'invalid input', issues: parsed.error.issues })
+    const { id } = req.params as { id: string }
+    const exists = await app.prisma.charClass.findUnique({ where: { id } })
+    if (!exists) return reply.code(404).send({ error: 'class not found' })
+    const { growth, skill, requiredRaceId, ...rest } = parsed.data
+    const updated = await app.prisma.charClass.update({
+      where: { id },
+      data: {
+        ...rest,
+        growth: growth as unknown as object,
+        skill: skill as unknown as object,
+        requiredRaceId: requiredRaceId ?? null,
+      },
+    })
+    app.contentCache.invalidate()
+    return reply.send({ class: updated })
+  })
+
+  app.delete('/api/admin/classes/:id', guard, async (req, reply) => {
+    const { id } = req.params as { id: string }
+    const exists = await app.prisma.charClass.findUnique({ where: { id } })
+    if (!exists) return reply.code(404).send({ error: 'class not found' })
+    await app.prisma.charClass.delete({ where: { id } })
     app.contentCache.invalidate()
     return reply.send({ ok: true })
   })

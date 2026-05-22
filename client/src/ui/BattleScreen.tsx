@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react'
 import { useGame } from '../game/store'
-import { CLASSES, RACES, resolveAttack, deriveCombatStats } from '@asura/shared'
+import { resolveAttack, deriveCombatStats } from '@asura/shared'
+import { useRaces, useClasses } from '../game/store'
 import type { Combatant } from '@asura/shared'
 
 interface FloatNum {
@@ -33,8 +34,10 @@ export function BattleScreen() {
   const [shakePlayer, setShakePlayer] = useState(false)
   const [shakeEnemy, setShakeEnemy] = useState(false)
 
-  const race = RACES.find((r) => r.id === game.raceId)!
-  const cls = CLASSES.find((c) => c.id === game.classId)!
+  const races = useRaces()
+  const classes = useClasses()
+  const race = races.find((r) => r.id === game.raceId)!
+  const cls = classes.find((c) => c.id === game.classId)!
 
   if (!battle) {
     return <div className="w-full h-full flex items-center justify-center">กำลังโหลด...</div>
