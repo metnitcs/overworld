@@ -333,16 +333,21 @@ function requireMap(content: ContentBundle | null, mapId: string): MapInfo {
 /** Persists only the auth token. Server is now the source of truth for game state. */
 const AUTH_KEY = 'asura_online_auth_v1'
 
-/** Build the persisted PUT body from the in-memory game state — drops the
- *  identity fields (name/raceId/classId) which are set at creation and
- *  immutable on the server, leaving the mutable slice.
- *  Slice 38: also attaches `expectedUpdatedAt` from `lastSyncAt` so the
- *  server can reject stale writes that would clobber concurrent admin/
- *  other-tab inventory edits. */
+/** Build the persisted PUT body from the in-memory game state.
+ *  Drops identity (name/raceId/classId — immutable outside creation) AND
+ *  Slice 45 server-authoritative fields (gold, inventory, equipWeapon, equipArmor, plus —
+ *  written only via intent endpoints). What's left is the transient
+ *  session state safe for client to push wholesale: position, lv/exp,
+ *  hp/mp, primary + derived stats, quest flags.
+ *  Slice 38: attaches `expectedUpdatedAt` from `lastSyncAt` so the
+ *  server can reject stale writes via optimistic concurrency. */
 function toSaveBody(g: GameState, expectedUpdatedAt?: string | null): SaveBody {
-  // Use a destructure to discard identity fields cleanly.
-  const { name: _n, raceId: _r, classId: _c, ...rest } = g
-  void _n; void _r; void _c
+  const {
+    name: _n, raceId: _r, classId: _c,
+    gold: _g, inventory: _i, equipWeapon: _ew, equipArmor: _ea, plus: _p,
+    ...rest
+  } = g
+  void _n; void _r; void _c; void _g; void _i; void _ew; void _ea; void _p
   if (expectedUpdatedAt) return { ...rest, expectedUpdatedAt }
   return rest
 }

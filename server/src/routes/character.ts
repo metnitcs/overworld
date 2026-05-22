@@ -50,15 +50,10 @@ const updateSchema = z.object({
   luk: z.number().int().min(1).max(STAT_HARD_CAP),
   vit: z.number().int().min(1).max(STAT_HARD_CAP),
   unspentPoints: z.number().int().min(0),
-  gold: z.number().int().min(0),
   map: z.string(),
   px: z.number().int(),
   py: z.number().int(),
   steps: z.number().int().min(0),
-  equipWeapon: z.string().nullable(),
-  equipArmor: z.string().nullable(),
-  plus: z.record(z.string(), z.number().int().min(0)),
-  inventory: z.record(z.string(), z.number().int().min(0)),
   transcended: z.boolean(),
   classChanged: z.boolean(),
   /// Slice 38: optimistic concurrency token. ISO timestamp of the
@@ -66,7 +61,15 @@ const updateSchema = z.object({
   /// Optional for back-compat — clients that omit it skip the staleness
   /// check entirely (and risk overwriting concurrent admin writes).
   expectedUpdatedAt: z.string().optional(),
-})
+  /// Slice 45: gold / inventory / equipWeapon / equipArmor / plus were
+  /// removed from the player PUT. Those mutations now flow exclusively
+  /// through intent endpoints (Slices 39-44: equip, unequip, consume,
+  /// shop/buy, heal-full, craft, enhance, battle/resolve). Any field
+  /// presented here is silently ignored — schema doesn't list it so
+  /// Zod strips it. Admin PUT /api/admin/characters/:id continues to
+  /// accept the full shape (Slice 30) and is the only way to edit
+  /// these from outside the game loop.
+}).strict()
 
 /** POST /api/character/:id/allocate — spend one chunk of points on one stat. */
 const allocateSchema = z.object({
@@ -341,39 +344,25 @@ export function registerCharacterRoutes(app: FastifyInstance): void {
       })
     }
 
-    const updated = await app.prisma.$transaction(async (tx) => {
-      await tx.character.update({
-        where: { id: existing.id },
-        data: {
-          lv: s.lv, exp: s.exp,
-          hp: s.hp, maxHp: s.maxHp, mp: s.mp, maxMp: s.maxMp,
-          atk: s.atk, def: s.def, spd: s.spd,
-          str: s.str, int: s.int, dex: s.dex,
-          agi: s.agi, luk: s.luk, vit: s.vit,
-          unspentPoints: s.unspentPoints,
-          gold: s.gold,
-          mapId: s.map, px: s.px, py: s.py, steps: s.steps,
-          equipWeapon: s.equipWeapon, equipArmor: s.equipArmor,
-          plus: s.plus,
-          transcended: s.transcended,
-          classChanged: s.classChanged,
-        },
-      })
-      await tx.inventoryItem.deleteMany({ where: { characterId: existing.id } })
-      const entries = Object.entries(s.inventory).filter(([, qty]) => qty > 0)
-      if (entries.length > 0) {
-        await tx.inventoryItem.createMany({
-          data: entries.map(([itemKey, qty]) => ({
-            characterId: existing.id, itemKey, qty,
-          })),
-        })
-      }
-      return tx.character.findUniqueOrThrow({
-        where: { id: existing.id },
-        include: { inventory: true },
-      })
+    // Slice 45: gold/inventory/equip/plus stripped from this write.
+    // Those fields now live behind intent endpoints. The remaining slice
+    // (position, stats, lv/exp, hp/mp, quest flags) is the "transient
+    // session state" that's safe for client to push wholesale.
+    const updated = await app.prisma.character.update({
+      where: { id: existing.id },
+      data: {
+        lv: s.lv, exp: s.exp,
+        hp: s.hp, maxHp: s.maxHp, mp: s.mp, maxMp: s.maxMp,
+        atk: s.atk, def: s.def, spd: s.spd,
+        str: s.str, int: s.int, dex: s.dex,
+        agi: s.agi, luk: s.luk, vit: s.vit,
+        unspentPoints: s.unspentPoints,
+        mapId: s.map, px: s.px, py: s.py, steps: s.steps,
+        transcended: s.transcended,
+        classChanged: s.classChanged,
+      },
+      include: { inventory: true },
     })
-
     return reply.send({ character: toApiCharacter(updated) })
   })
 
@@ -401,39 +390,22 @@ export function registerCharacterRoutes(app: FastifyInstance): void {
       })
     }
 
-    const updated = await app.prisma.$transaction(async (tx) => {
-      await tx.character.update({
-        where: { id: existing.id },
-        data: {
-          lv: s.lv, exp: s.exp,
-          hp: s.hp, maxHp: s.maxHp, mp: s.mp, maxMp: s.maxMp,
-          atk: s.atk, def: s.def, spd: s.spd,
-          str: s.str, int: s.int, dex: s.dex,
-          agi: s.agi, luk: s.luk, vit: s.vit,
-          unspentPoints: s.unspentPoints,
-          gold: s.gold,
-          mapId: s.map, px: s.px, py: s.py, steps: s.steps,
-          equipWeapon: s.equipWeapon, equipArmor: s.equipArmor,
-          plus: s.plus,
-          transcended: s.transcended,
-          classChanged: s.classChanged,
-        },
-      })
-      await tx.inventoryItem.deleteMany({ where: { characterId: existing.id } })
-      const entries = Object.entries(s.inventory).filter(([, qty]) => qty > 0)
-      if (entries.length > 0) {
-        await tx.inventoryItem.createMany({
-          data: entries.map(([itemKey, qty]) => ({
-            characterId: existing.id, itemKey, qty,
-          })),
-        })
-      }
-      return tx.character.findUniqueOrThrow({
-        where: { id: existing.id },
-        include: { inventory: true },
-      })
+    // Slice 45: same restriction as the by-id PUT.
+    const updated = await app.prisma.character.update({
+      where: { id: existing.id },
+      data: {
+        lv: s.lv, exp: s.exp,
+        hp: s.hp, maxHp: s.maxHp, mp: s.mp, maxMp: s.maxMp,
+        atk: s.atk, def: s.def, spd: s.spd,
+        str: s.str, int: s.int, dex: s.dex,
+        agi: s.agi, luk: s.luk, vit: s.vit,
+        unspentPoints: s.unspentPoints,
+        mapId: s.map, px: s.px, py: s.py, steps: s.steps,
+        transcended: s.transcended,
+        classChanged: s.classChanged,
+      },
+      include: { inventory: true },
     })
-
     return reply.send({ character: toApiCharacter(updated) })
   })
 

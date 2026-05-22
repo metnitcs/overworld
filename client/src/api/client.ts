@@ -332,12 +332,20 @@ export interface ContentResponse {
   classes: CharClass[]
 }
 
-/** Fields persisted via PUT — the GameState fields that are mutable in-game
- *  (identity fields name/raceId/classId are set at creation and immutable).
+/** Fields persisted via PUT.
  *  Slice 38: `expectedUpdatedAt` is the optimistic-concurrency token. The
  *  store passes the value from `lastSyncAt[characterId]` (received in the
- *  most recent GET/PUT response). Server rejects with 409 on mismatch. */
-export type SaveBody = Omit<GameState, 'name' | 'raceId' | 'classId'> & {
+ *  most recent GET/PUT response). Server rejects with 409 on mismatch.
+ *  Slice 45: gold / inventory / equipWeapon / equipArmor / plus removed —
+ *  those mutations now flow exclusively through intent endpoints
+ *  (equip, unequip, consume, shop/buy, heal-full, craft, enhance,
+ *  battle/resolve). Identity fields name/raceId/classId remain immutable
+ *  outside of POST /character (creation) and POST /transcend +
+ *  POST /change-class. */
+export type SaveBody = Omit<
+  GameState,
+  'name' | 'raceId' | 'classId' | 'gold' | 'inventory' | 'equipWeapon' | 'equipArmor' | 'plus'
+> & {
   expectedUpdatedAt?: string
 }
 

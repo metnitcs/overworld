@@ -26,18 +26,18 @@ async function registerAndGetToken(username: string): Promise<string> {
   return (res.json() as { token: string }).token
 }
 
-/** Full PUT body shape (Slice 16/17/23). Tests build on top of this.
- *  Primary stats default to 10 (the post-creation seed values). */
+/** Full PUT body shape (Slice 16/17/23 + Slice 45 trim).
+ *  Slice 45: gold/inventory/equipWeapon/equipArmor/plus removed — those
+ *  now flow through intent endpoints (Slices 39–44). Tests that need to
+ *  manipulate those fields should write to the DB directly via Prisma. */
 function fullSaveBody(overrides: Partial<Record<string, unknown>> = {}) {
   return {
-    lv: 1, exp: 0, gold: 100,
+    lv: 1, exp: 0,
     hp: 100, maxHp: 100, mp: 80, maxMp: 80,
     atk: 11, def: 9, spd: 10,
     str: 10, int: 10, dex: 10, agi: 10, luk: 10, vit: 10,
     unspentPoints: 0,
     map: 'village', px: 5, py: 5, steps: 0,
-    equipWeapon: null, equipArmor: null,
-    plus: {}, inventory: {},
     transcended: false,
     classChanged: true,
     ...overrides,
@@ -213,7 +213,7 @@ describe('POST /api/character slot cap', () => {
 })
 
 describe('PUT /api/character/:id (Slice 16 by-id save)', () => {
-  it('updates fields + replaces inventory + persists transcended flag', async () => {
+  it('updates non-inventory fields + persists transcended flag', async () => {
     const token = await registerAndGetToken('test_gina')
     const created = await app.inject({
       method: 'POST', url: '/api/character', headers: { authorization: `Bearer ${token}` },
@@ -222,13 +222,10 @@ describe('PUT /api/character/:id (Slice 16 by-id save)', () => {
     const id = (created.json() as { character: { id: string } }).character.id
 
     const update = fullSaveBody({
-      lv: 5, exp: 12, gold: 250,
+      lv: 5, exp: 12,
       hp: 120, maxHp: 150, mp: 40, maxMp: 60,
       atk: 30, def: 18, spd: 20,
       map: 'sakura', px: 3, py: 7, steps: 42,
-      equipWeapon: 'sword-1',
-      plus: { 'sword-1_w': 2 },
-      inventory: { 'potion-s': 1, 'silk': 4 },
       transcended: true,
     })
     const res = await app.inject({
@@ -245,13 +242,68 @@ describe('PUT /api/character/:id (Slice 16 by-id save)', () => {
       // creation. The `assassin` in the POST payload is ignored.
       name: 'Gina', raceId: STARTER_RACE.id, classId: 'adventurer',
     })
+  })
 
-    const verify = await app.inject({
-      method: 'GET', url: `/api/character/${id}`, headers: { authorization: `Bearer ${token}` },
+  // Slice 45: the headline test for "GM-add-item no longer disappears".
+  // Player PUT used to wipe + recreate the inventory; now it leaves it
+  // alone. Admin-added items survive the next autosave.
+  it('does NOT touch inventory / gold / equip / plus (Slice 45)', async () => {
+    const token = await registerAndGetToken('test_no_touch_inv')
+    const created = await app.inject({
+      method: 'POST', url: '/api/character', headers: { authorization: `Bearer ${token}` },
+      payload: { name: 'N' },
     })
-    const verified = (verify.json() as { character: { inventory: Record<string, number>; transcended: boolean } }).character
-    expect(verified.inventory).toEqual({ 'potion-s': 1, 'silk': 4 })
-    expect(verified.transcended).toBe(true)
+    const id = (created.json() as { character: { id: string } }).character.id
+
+    // Simulate admin write: add an item + bump gold + set equip + plus.
+    await prisma.inventoryItem.create({
+      data: { characterId: id, itemKey: 'sword-1', qty: 1 },
+    })
+    await prisma.character.update({
+      where: { id },
+      data: { gold: 9999, equipWeapon: 'sword-1', plus: { 'sword-1_w': 5 } },
+    })
+
+    // Player PUT only carries position/stats/lv/exp/hp/mp now.
+    const res = await app.inject({
+      method: 'PUT', url: `/api/character/${id}`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: fullSaveBody({ lv: 2, exp: 5, px: 7, py: 7, steps: 50 }),
+    })
+    expect(res.statusCode).toBe(200)
+    const body = res.json() as {
+      character: {
+        gold: number
+        inventory: Record<string, number>
+        equipWeapon: string | null
+        plus: Record<string, number>
+        lv: number
+        steps: number
+      }
+    }
+    // Inventory + gold + equip + plus survived the player PUT.
+    expect(body.character.gold).toBe(9999)
+    expect(body.character.inventory['sword-1']).toBe(1)
+    expect(body.character.equipWeapon).toBe('sword-1')
+    expect(body.character.plus).toEqual({ 'sword-1_w': 5 })
+    // ...and the allowed fields did write through.
+    expect(body.character.lv).toBe(2)
+    expect(body.character.steps).toBe(50)
+  })
+
+  it('rejects PUTs that try to send the stripped fields (zod .strict 400)', async () => {
+    const token = await registerAndGetToken('test_strict_put')
+    const created = await app.inject({
+      method: 'POST', url: '/api/character', headers: { authorization: `Bearer ${token}` },
+      payload: { name: 'S' },
+    })
+    const id = (created.json() as { character: { id: string } }).character.id
+    const res = await app.inject({
+      method: 'PUT', url: `/api/character/${id}`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { ...fullSaveBody(), gold: 50 } as Record<string, unknown>,
+    })
+    expect(res.statusCode).toBe(400)
   })
 
   // Slice 38: optimistic concurrency. expectedUpdatedAt is the row's
@@ -280,7 +332,11 @@ describe('PUT /api/character/:id (Slice 16 by-id save)', () => {
       method: 'PUT',
       url: `/api/character/${c0.id}`,
       headers: { authorization: `Bearer ${token}` },
-      payload: fullSaveBody({ expectedUpdatedAt: c0.updatedAt, gold: 50, inventory: {} }),
+      // Slice 45: PUT body no longer carries gold/inventory at all — the
+      // staleness check now mostly protects lv/exp/stats from concurrent
+      // admin writes. The 409 response still carries the fresh row so
+      // the client can adopt admin-side changes via merge.
+      payload: fullSaveBody({ expectedUpdatedAt: c0.updatedAt }),
     })
     expect(res.statusCode).toBe(409)
     const body = res.json() as { error: string; character: { gold: number; inventory: Record<string, number>; updatedAt: string } }
@@ -303,11 +359,11 @@ describe('PUT /api/character/:id (Slice 16 by-id save)', () => {
       method: 'PUT',
       url: `/api/character/${c0.id}`,
       headers: { authorization: `Bearer ${token}` },
-      payload: fullSaveBody({ expectedUpdatedAt: c0.updatedAt, gold: 250 }),
+      payload: fullSaveBody({ expectedUpdatedAt: c0.updatedAt, steps: 99 }),
     })
     expect(res.statusCode).toBe(200)
-    const body = res.json() as { character: { gold: number; updatedAt: string } }
-    expect(body.character.gold).toBe(250)
+    const body = res.json() as { character: { steps: number; updatedAt: string } }
+    expect(body.character.steps).toBe(99)
     // updatedAt advances after a successful write.
     expect(body.character.updatedAt).not.toBe(c0.updatedAt)
   })
@@ -323,7 +379,7 @@ describe('PUT /api/character/:id (Slice 16 by-id save)', () => {
       method: 'PUT',
       url: `/api/character/${id}`,
       headers: { authorization: `Bearer ${token}` },
-      payload: fullSaveBody({ gold: 77 }), // no expectedUpdatedAt
+      payload: fullSaveBody({ steps: 77 }), // no expectedUpdatedAt
     })
     expect(res.statusCode).toBe(200)
   })
