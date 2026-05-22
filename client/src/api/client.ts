@@ -407,6 +407,21 @@ export const api = {
       method: 'POST', token, body: { itemKey },
     }),
 
+  /** Slice 41 — buy from a shop NPC. Server validates the NPC is on the
+   *  player's current map + sells the requested item, deducts gold,
+   *  increments inventory atomically. */
+  buyFromShop: (token: string, id: string, npcId: string, itemKey: string, qty = 1) =>
+    request<CharacterResponse>(`/api/character/${id}/shop/buy`, {
+      method: 'POST', token, body: { npcId, itemKey, qty },
+    }),
+
+  /** Slice 41 — heal-full from a healer NPC. Deducts HEAL_FULL_COST + sets
+   *  hp/mp to max. NPC must be on the player's current map. */
+  healFull: (token: string, id: string, npcId: string) =>
+    request<CharacterResponse>(`/api/character/${id}/heal-full`, {
+      method: 'POST', token, body: { npcId },
+    }),
+
   // ─── Legacy first-char endpoints (kept until full removal) ───
   getCharacter: (token: string) =>
     request<CharacterResponse>('/api/character', { token }),

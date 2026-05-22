@@ -4,29 +4,15 @@ import { HEAL_FULL_COST } from '@asura/shared'
 /** Shop + Healer view for the village (and any future map carrying these
  *  NPC kinds). Reads stock from the Content cache (ADR 0002): for each NPC
  *  on the current map, render its items (shop) or a heal-full action
- *  (healer). Heal cost lives in `HEAL_FULL_COST` so seed + UI agree. */
+ *  (healer). Heal cost lives in `HEAL_FULL_COST` so seed + UI agree.
+ *  Slice 41: buy + heal now flow through server intent endpoints
+ *  (gold + inventory + hp/mp updates are server-authoritative). */
 export function ShopModal() {
   const game = useGame(s => s.game)
   const items = useGame(s => s.content!.items)
   const npcs = useGame(s => s.content!.maps[s.game.map].npcs)
-  const spendGold = useGame(s => s.spendGold)
-  const addItem = useGame(s => s.addItem)
-  const log = useGame(s => s.log)
-
-  function buyItem(itemKey: string, price: number, displayName: string) {
-    if (!spendGold(price)) return
-    addItem(itemKey)
-    log(`ซื้อ ${displayName}`, 'good')
-  }
-
-  function healFull() {
-    if (!spendGold(HEAL_FULL_COST)) return
-    const g = { ...useGame.getState().game }
-    g.hp = g.maxHp
-    g.mp = g.maxMp
-    useGame.setState({ game: g })
-    log('💊 ฟื้นฟูเต็มหลอด!', 'good')
-  }
+  const buyFromShop = useGame(s => s.buyFromShop)
+  const healFull = useGame(s => s.healFull)
 
   const healers = npcs.filter((n) => n.kind === 'healer')
   const shopkeepers = npcs.filter((n) => n.kind === 'shop')
@@ -56,7 +42,7 @@ export function ShopModal() {
           <button
             className="btn btn-sm btn-green"
             disabled={game.gold < HEAL_FULL_COST}
-            onClick={healFull}
+            onClick={() => void healFull(healer.id)}
           >
             ฟื้นฟู
           </button>
@@ -78,7 +64,7 @@ export function ShopModal() {
               <button
                 className="btn btn-sm btn-green"
                 disabled={game.gold < entry.price}
-                onClick={() => buyItem(entry.item, entry.price, item.name)}
+                onClick={() => void buyFromShop(shop.id, entry.item, item.name)}
               >
                 ซื้อ
               </button>

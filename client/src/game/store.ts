@@ -200,6 +200,9 @@ interface Store {
   removeItem: (key: string, qty?: number) => void
   spendGold: (amt: number) => boolean
   gainGold: (amt: number) => void
+  // Slice 41: shop + healer intents
+  buyFromShop: (npcId: string, itemKey: string, displayName: string) => Promise<void>
+  healFull: (npcId: string) => Promise<void>
   // Craft / enhance / class change
   craft: (resultKey: string) => boolean
   enhance: (key: string, slot: '_w' | '_a') => 'ok' | 'fail' | 'no-stone'
@@ -1154,6 +1157,52 @@ export const useGame = create<Store>()(
       },
       gainGold: (amt) => {
         set({ game: { ...get().game, gold: get().game.gold + amt } })
+      },
+
+      // Slice 41: shop buy + healer service via server intents.
+      buyFromShop: async (npcId, itemKey, displayName) => {
+        const token = get().token
+        const id = get().activeCharacterId
+        if (!token || !id) return
+        setSaveStatus('saving')
+        try {
+          const r = await api.buyFromShop(token, id, npcId, itemKey, 1)
+          const { id: _, updatedAt, ...gameState } = r.character
+          void _
+          rememberSync(id, updatedAt)
+          const next = deriveStats(gameState, { items: get().content?.items })
+          useGame.setState({ game: next })
+          lastSavedSnapshot = snapshotOf(next)
+          setSaveStatus('saved')
+          get().log(`ซื้อ ${displayName}`, 'good')
+        } catch (err) {
+          setSaveStatus('error')
+          const msg = err instanceof ApiError && err.body && typeof err.body === 'object' && 'error' in err.body
+            ? String((err.body as { error: string }).error) : String(err)
+          get().log(`ซื้อไม่ได้: ${msg}`, 'bad')
+        }
+      },
+      healFull: async (npcId) => {
+        const token = get().token
+        const id = get().activeCharacterId
+        if (!token || !id) return
+        setSaveStatus('saving')
+        try {
+          const r = await api.healFull(token, id, npcId)
+          const { id: _, updatedAt, ...gameState } = r.character
+          void _
+          rememberSync(id, updatedAt)
+          const next = deriveStats(gameState, { items: get().content?.items })
+          useGame.setState({ game: next })
+          lastSavedSnapshot = snapshotOf(next)
+          setSaveStatus('saved')
+          get().log('💊 ฟื้นฟูเต็มหลอด!', 'good')
+        } catch (err) {
+          setSaveStatus('error')
+          const msg = err instanceof ApiError && err.body && typeof err.body === 'object' && 'error' in err.body
+            ? String((err.body as { error: string }).error) : String(err)
+          get().log(`รักษาไม่ได้: ${msg}`, 'bad')
+        }
       },
 
       craft: (resultKey) => {

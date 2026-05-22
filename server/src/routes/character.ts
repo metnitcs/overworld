@@ -8,6 +8,7 @@ import {
   STAT_BASE, STAT_HARD_CAP,
   spendPoints, resetStats,
   applyRaceModifiers, shiftRaceModifierDiff,
+  HEAL_FULL_COST,
   type PrimaryStat,
 } from '@asura/shared'
 // Slice 28: race + class data lives in DB now (admin-editable). Server
@@ -95,6 +96,18 @@ const unequipSchema = z.object({
  *  potion after using it. */
 const consumeSchema = z.object({
   itemKey: z.string().min(1),
+})
+
+/** Slice 41: shop buy + healer intent endpoints. NPC id pinpoints which
+ *  vendor the request is for; server validates the NPC is on the player's
+ *  current map before honoring the price. */
+const buySchema = z.object({
+  npcId: z.string().min(1),
+  itemKey: z.string().min(1),
+  qty: z.number().int().min(1).max(99).default(1),
+})
+const healFullSchema = z.object({
+  npcId: z.string().min(1),
 })
 
 const DEFAULT_INVENTORY: Record<string, number> = { 'potion-s': 3 }
@@ -736,6 +749,90 @@ export function registerCharacterRoutes(app: FastifyInstance): void {
       return tx.character.findUniqueOrThrow({
         where: { id: existing.id }, include: { inventory: true },
       })
+    })
+    return reply.send({ character: toApiCharacter(updated) })
+  })
+
+  // ─── POST /api/character/:id/shop/buy — Slice 41 intent endpoint ─────────
+  // Server validates: the NPC exists, is a shop, sits on the player's
+  // current map, and sells the requested item. Gold + inventory writes
+  // are atomic — no double-spend if the request races.
+  app.post('/api/character/:id/shop/buy', { preHandler: app.requireAuth }, async (req, reply) => {
+    const parsed = buySchema.safeParse(req.body)
+    if (!parsed.success) {
+      return reply.code(400).send({ error: 'invalid input', issues: parsed.error.issues })
+    }
+    const { id } = req.params as { id: string }
+    const { npcId, itemKey, qty } = parsed.data
+
+    const existing = await app.prisma.character.findUnique({
+      where: { id }, include: { inventory: true },
+    })
+    if (!existing || existing.userId !== req.userId) {
+      return reply.code(404).send({ error: 'character not found' })
+    }
+    const npc = await app.prisma.npc.findUnique({
+      where: { id: npcId }, include: { shopItems: true },
+    })
+    if (!npc || npc.kind !== 'shop' || npc.mapId !== existing.mapId) {
+      return reply.code(404).send({ error: 'shop not reachable from current map' })
+    }
+    const entry = npc.shopItems.find((s) => s.itemId === itemKey)
+    if (!entry) return reply.code(404).send({ error: 'shop does not sell this item' })
+    const totalCost = entry.price * qty
+    if (existing.gold < totalCost) {
+      return reply.code(409).send({ error: 'insufficient gold' })
+    }
+
+    const updated = await app.prisma.$transaction(async (tx) => {
+      await tx.character.update({
+        where: { id: existing.id },
+        data: { gold: existing.gold - totalCost },
+      })
+      await tx.inventoryItem.upsert({
+        where: { characterId_itemKey: { characterId: existing.id, itemKey } },
+        create: { characterId: existing.id, itemKey, qty },
+        update: { qty: { increment: qty } },
+      })
+      return tx.character.findUniqueOrThrow({
+        where: { id: existing.id }, include: { inventory: true },
+      })
+    })
+    return reply.send({ character: toApiCharacter(updated) })
+  })
+
+  // ─── POST /api/character/:id/heal-full — Slice 41 intent endpoint ────────
+  // Healer-NPC service: deduct HEAL_FULL_COST, set hp/mp to max. Validates
+  // the healer is reachable from the player's current map.
+  app.post('/api/character/:id/heal-full', { preHandler: app.requireAuth }, async (req, reply) => {
+    const parsed = healFullSchema.safeParse(req.body)
+    if (!parsed.success) {
+      return reply.code(400).send({ error: 'invalid input', issues: parsed.error.issues })
+    }
+    const { id } = req.params as { id: string }
+    const { npcId } = parsed.data
+
+    const existing = await app.prisma.character.findUnique({
+      where: { id }, include: { inventory: true },
+    })
+    if (!existing || existing.userId !== req.userId) {
+      return reply.code(404).send({ error: 'character not found' })
+    }
+    const npc = await app.prisma.npc.findUnique({ where: { id: npcId } })
+    if (!npc || npc.kind !== 'healer' || npc.mapId !== existing.mapId) {
+      return reply.code(404).send({ error: 'healer not reachable from current map' })
+    }
+    if (existing.gold < HEAL_FULL_COST) {
+      return reply.code(409).send({ error: 'insufficient gold' })
+    }
+    const updated = await app.prisma.character.update({
+      where: { id: existing.id },
+      data: {
+        gold: existing.gold - HEAL_FULL_COST,
+        hp: existing.maxHp,
+        mp: existing.maxMp,
+      },
+      include: { inventory: true },
     })
     return reply.send({ character: toApiCharacter(updated) })
   })

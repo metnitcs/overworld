@@ -877,6 +877,155 @@ describe('POST /api/character/:id/consume', () => {
   })
 })
 
+// ─── Slice 41 — shop buy + healer intent endpoints ────────────────────────
+describe('POST /api/character/:id/shop/buy', () => {
+  // Production seed places `village-shopkeeper` + `village-healer` on the
+  // village map. New characters spawn there, so we can hit those NPCs
+  // directly without rigging up a custom fixture.
+  it('deducts gold and adds the bought item to inventory', async () => {
+    const token = await registerAndGetToken('test_buy_ok')
+    const created = await app.inject({
+      method: 'POST', url: '/api/character', headers: { authorization: `Bearer ${token}` },
+      payload: { name: 'B' },
+    })
+    const id = (created.json() as { character: { id: string; gold: number } }).character.id
+    const shop = await prisma.npc.findFirstOrThrow({
+      where: { kind: 'shop', mapId: 'village' }, include: { shopItems: true },
+    })
+    const stockItem = shop.shopItems[0]
+    expect(stockItem).toBeDefined()
+
+    const res = await app.inject({
+      method: 'POST', url: `/api/character/${id}/shop/buy`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { npcId: shop.id, itemKey: stockItem.itemId, qty: 1 },
+    })
+    expect(res.statusCode).toBe(200)
+    const body = res.json() as { character: { gold: number; inventory: Record<string, number> } }
+    expect(body.character.gold).toBe(100 - stockItem.price)
+    expect(body.character.inventory[stockItem.itemId]).toBeGreaterThanOrEqual(1)
+  })
+
+  it('rejects buying with insufficient gold (409)', async () => {
+    const token = await registerAndGetToken('test_buy_broke')
+    const created = await app.inject({
+      method: 'POST', url: '/api/character', headers: { authorization: `Bearer ${token}` },
+      payload: { name: 'P' },
+    })
+    const id = (created.json() as { character: { id: string } }).character.id
+    await prisma.character.update({ where: { id }, data: { gold: 0 } })
+    const shop = await prisma.npc.findFirstOrThrow({
+      where: { kind: 'shop', mapId: 'village' }, include: { shopItems: true },
+    })
+    const res = await app.inject({
+      method: 'POST', url: `/api/character/${id}/shop/buy`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { npcId: shop.id, itemKey: shop.shopItems[0].itemId },
+    })
+    expect(res.statusCode).toBe(409)
+  })
+
+  it('rejects buying from a shop on a different map (404)', async () => {
+    const token = await registerAndGetToken('test_buy_offmap')
+    const created = await app.inject({
+      method: 'POST', url: '/api/character', headers: { authorization: `Bearer ${token}` },
+      payload: { name: 'O' },
+    })
+    const id = (created.json() as { character: { id: string } }).character.id
+    // Move the character to a different map than the shop.
+    await prisma.character.update({ where: { id }, data: { mapId: 'sakura' } })
+    const shop = await prisma.npc.findFirstOrThrow({
+      where: { kind: 'shop', mapId: 'village' }, include: { shopItems: true },
+    })
+    const res = await app.inject({
+      method: 'POST', url: `/api/character/${id}/shop/buy`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { npcId: shop.id, itemKey: shop.shopItems[0].itemId },
+    })
+    expect(res.statusCode).toBe(404)
+  })
+
+  it('rejects buying an item the shop does not stock (404)', async () => {
+    const token = await registerAndGetToken('test_buy_unstocked')
+    const created = await app.inject({
+      method: 'POST', url: '/api/character', headers: { authorization: `Bearer ${token}` },
+      payload: { name: 'U' },
+    })
+    const id = (created.json() as { character: { id: string } }).character.id
+    const shop = await prisma.npc.findFirstOrThrow({
+      where: { kind: 'shop', mapId: 'village' }, include: { shopItems: true },
+    })
+    const unstocked = await prisma.item.findFirst({
+      where: { id: { notIn: shop.shopItems.map((s) => s.itemId) } },
+    })
+    const res = await app.inject({
+      method: 'POST', url: `/api/character/${id}/shop/buy`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { npcId: shop.id, itemKey: unstocked!.id },
+    })
+    expect(res.statusCode).toBe(404)
+  })
+})
+
+describe('POST /api/character/:id/heal-full', () => {
+  it('deducts cost and restores hp/mp to max', async () => {
+    const token = await registerAndGetToken('test_heal_ok')
+    const created = await app.inject({
+      method: 'POST', url: '/api/character', headers: { authorization: `Bearer ${token}` },
+      payload: { name: 'H' },
+    })
+    const id = (created.json() as { character: { id: string; gold: number; maxHp: number } }).character.id
+    await prisma.character.update({ where: { id }, data: { hp: 10, mp: 5 } })
+    const healer = await prisma.npc.findFirstOrThrow({ where: { kind: 'healer', mapId: 'village' } })
+
+    const res = await app.inject({
+      method: 'POST', url: `/api/character/${id}/heal-full`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { npcId: healer.id },
+    })
+    expect(res.statusCode).toBe(200)
+    const body = res.json() as { character: { hp: number; maxHp: number; mp: number; maxMp: number; gold: number } }
+    expect(body.character.hp).toBe(body.character.maxHp)
+    expect(body.character.mp).toBe(body.character.maxMp)
+    expect(body.character.gold).toBe(100 - 50) // HEAL_FULL_COST
+  })
+
+  it('rejects healing from off-map healer (404)', async () => {
+    const token = await registerAndGetToken('test_heal_offmap')
+    const created = await app.inject({
+      method: 'POST', url: '/api/character', headers: { authorization: `Bearer ${token}` },
+      payload: { name: 'O' },
+    })
+    const id = (created.json() as { character: { id: string } }).character.id
+    await prisma.character.update({ where: { id }, data: { mapId: 'sakura' } })
+    const healer = await prisma.npc.findFirstOrThrow({ where: { kind: 'healer', mapId: 'village' } })
+
+    const res = await app.inject({
+      method: 'POST', url: `/api/character/${id}/heal-full`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { npcId: healer.id },
+    })
+    expect(res.statusCode).toBe(404)
+  })
+
+  it('rejects healing with insufficient gold (409)', async () => {
+    const token = await registerAndGetToken('test_heal_broke')
+    const created = await app.inject({
+      method: 'POST', url: '/api/character', headers: { authorization: `Bearer ${token}` },
+      payload: { name: 'B' },
+    })
+    const id = (created.json() as { character: { id: string } }).character.id
+    await prisma.character.update({ where: { id }, data: { gold: 10 } })
+    const healer = await prisma.npc.findFirstOrThrow({ where: { kind: 'healer', mapId: 'village' } })
+    const res = await app.inject({
+      method: 'POST', url: `/api/character/${id}/heal-full`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { npcId: healer.id },
+    })
+    expect(res.statusCode).toBe(409)
+  })
+})
+
 describe('DELETE /api/character/:id (Slice 16 slot reclaim)', () => {
   it('removes the character so the slot can be reused', async () => {
     const token = await registerAndGetToken('test_del')
