@@ -666,17 +666,15 @@ export const useGame = create<Store>()(
           if (newExp !== cur.exp) {
             set({ game: { ...cur, exp: newExp } })
           }
-          // Force the relevant modal back open. Re-popping is harmless
-          // since the modal is already self-contained.
-          if (get().modal === 'none' && get().screen === 'game') {
-            const which: 'race-change' | 'class-choice' =
-              racePending ? 'race-change' : 'class-choice'
-            const msg = racePending
-              ? '⏸ ต้องเลือกเผ่าก่อน EXP ถึงจะขึ้นต่อ'
-              : '⏸ ต้องเลือกอาชีพก่อน EXP ถึงจะขึ้นต่อ'
-            get().log(msg, 'bad')
-            set({ modal: which })
-          }
+          // NOTE: don't pop the modal here — gainExp fires during
+          // endBattle when screen='battle', so the modal would mount
+          // over the battle UI. Modal-pop is handled centrally by
+          // checkPendingQuest() in returnToMap / selectCharacter so
+          // it always shows when the player is back on the game screen.
+          const msg = racePending
+            ? '⏸ ต้องเลือกเผ่าก่อน EXP ถึงจะขึ้นต่อ'
+            : '⏸ ต้องเลือกอาชีพก่อน EXP ถึงจะขึ้นต่อ'
+          get().log(msg, 'bad')
           return
         }
 
@@ -895,6 +893,13 @@ export const useGame = create<Store>()(
           }
           setTimeout(() => {
             set({ screen: 'game', battle: null, battleLog: [] })
+            // Slice 29: re-pop pending quest modal on flee too.
+            const gs = get().game
+            if (gs.lv >= TRANSCEND_LV && !gs.transcended && get().modal === 'none') {
+              set({ modal: 'race-change' })
+            } else if (gs.lv >= CLASS_CHANGE_LV && gs.transcended && !gs.classChanged && get().modal === 'none') {
+              set({ modal: 'class-choice' })
+            }
           }, 800)
         } else {
           get().pushBattleLog('💨 หนีไม่ทัน!')
@@ -922,6 +927,15 @@ export const useGame = create<Store>()(
         const b = get().battle
         if (!b) return
         set({ screen: 'game', battle: null, battleLog: [] })
+        // Slice 29: re-check pending quest after returning from battle.
+        // If EXP got capped mid-fight (lv ≥ threshold + flag false),
+        // the modal must pop now that we're back on the game screen.
+        const g = get().game
+        if (g.lv >= TRANSCEND_LV && !g.transcended && get().modal === 'none') {
+          set({ modal: 'race-change' })
+        } else if (g.lv >= CLASS_CHANGE_LV && g.transcended && !g.classChanged && get().modal === 'none') {
+          set({ modal: 'class-choice' })
+        }
       },
 
       defeatReset: () => {
