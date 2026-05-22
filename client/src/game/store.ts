@@ -973,37 +973,30 @@ export const useGame = create<Store>()(
       },
 
       // Inventory
-      // Slice 32: equip/unequip are explicit API calls (await PUT) so a
-      // refresh immediately after a click still sees the new state on the
-      // server. Local set() is optimistic; on PUT failure we log + revert.
-      // Slice 33: items move between inventory and equip slot — equipping
-      // CONSUMES 1 from inventory, unequipping RETURNS 1. Previously the
-      // slot and inventory were independent, which meant unequipping an
-      // admin-assigned item with qty=0 in inventory deleted it forever.
+      // Slice 36: equip/unequip return to the classic Thai-web-MMO model
+      // — the item STAYS in the inventory; the slot just points to it.
+      //   - "เห็นของในกระเป๋าตลอดเวลา" feels familiar to anyone who played
+      //     Demon Online / Yulgang / etc.
+      //   - Equipping requires inv[key] ≥ 1 (you own it).
+      //   - Unequipping never removes from inv.
+      //   - Safety net: if the slot was admin-assigned without an inv
+      //     row, unequip auto-adds 1 so the item isn't lost. Keeps the
+      //     Slice 33 data-loss fix in place without breaking the
+      //     player-side mental model.
       equip: (key) => {
         const it = get().content?.items[key]
         if (!it) return
         const prev = get().game
-        const g = { ...prev, inventory: { ...prev.inventory }, plus: { ...prev.plus } }
+        const g = { ...prev, inventory: { ...prev.inventory } }
 
-        // Must have it in inventory to equip (admins should give items to
-        // inv first, not assign equipWeapon directly).
         if ((g.inventory[key] || 0) < 1) {
           get().log(`ไม่มี ${it.name} ในกระเป๋า`, 'bad')
           return
         }
 
-        const slot: 'equipWeapon' | 'equipArmor' = it.type === 'weapon' ? 'equipWeapon' : 'equipArmor'
-        if (slot !== 'equipWeapon' && slot !== 'equipArmor') return
-        const oldKey = g[slot]
-
-        // Take new from inventory
-        g.inventory[key] = (g.inventory[key] || 0) - 1
-        if (g.inventory[key] <= 0) delete g.inventory[key]
-        // Return old to inventory (if any was equipped)
-        if (oldKey) {
-          g.inventory[oldKey] = (g.inventory[oldKey] || 0) + 1
-        }
+        const slot: 'equipWeapon' | 'equipArmor' =
+          it.type === 'weapon' ? 'equipWeapon' : 'equipArmor'
+        if (it.type !== 'weapon' && it.type !== 'armor') return
         g[slot] = key
 
         const next = deriveStats(g, { items: get().content?.items })
@@ -1015,21 +1008,20 @@ export const useGame = create<Store>()(
         const prev = get().game
         const g = { ...prev, inventory: { ...prev.inventory } }
         let cleared = false
-        if (g.equipWeapon === key) {
-          g.equipWeapon = null
-          g.inventory[key] = (g.inventory[key] || 0) + 1
-          cleared = true
-        }
-        if (g.equipArmor === key) {
-          g.equipArmor = null
-          g.inventory[key] = (g.inventory[key] || 0) + 1
-          cleared = true
-        }
+        if (g.equipWeapon === key) { g.equipWeapon = null; cleared = true }
+        if (g.equipArmor === key)  { g.equipArmor  = null; cleared = true }
         if (!cleared) return
+
+        // Safety net for admin-assigned slots: if the item has no inv
+        // row, add 1 so unequip doesn't make it disappear forever.
+        if ((g.inventory[key] || 0) < 1) {
+          g.inventory[key] = 1
+        }
+
         const it = get().content?.items[key]
         const next = deriveStats(g, { items: get().content?.items })
         set({ game: next })
-        get().log(`ถอด ${it?.name ?? key} (คืนเข้ากระเป๋า)`, 'system')
+        get().log(`ถอด ${it?.name ?? key}`, 'system')
         void persistGameNow(get, set, prev)
       },
       useConsume: (key) => {
