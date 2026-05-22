@@ -442,6 +442,15 @@ export const api = {
       method: 'POST', token, body: { itemKey, slot },
     }),
 
+  /** Slice 44 — credit reward for a defeated monster. Server rolls exp,
+   *  gold, and drops from the DB monster def + writes to inventory atomically. */
+  resolveBattle: (token: string, id: string, monsterId: string) =>
+    request<CharacterResponse & {
+      rewards: { exp: number; gold: number; items: string[]; levelsGained: number }
+    }>(`/api/character/${id}/battle/resolve`, {
+      method: 'POST', token, body: { monsterId },
+    }),
+
   // ─── Legacy first-char endpoints (kept until full removal) ───
   getCharacter: (token: string) =>
     request<CharacterResponse>('/api/character', { token }),

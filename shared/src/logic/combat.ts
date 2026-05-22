@@ -80,6 +80,9 @@ export function scaleEnemy(def: MonsterDef, rng: Rng): BattleEnemy {
   const lvBoost = Math.floor(rng() * 3)
   const maxHp = def.hp + lvBoost * 8
   return {
+    // Slice 44: carry the source id through so the post-victory
+    // battle/resolve call knows which monster to credit.
+    id: def.id,
     name: def.name,
     emoji: def.emoji,
     lv: def.lv + lvBoost,

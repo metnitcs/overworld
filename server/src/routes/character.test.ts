@@ -1210,6 +1210,92 @@ describe('POST /api/character/:id/enhance', () => {
   })
 })
 
+// ─── Slice 44 — battle resolve intent endpoint ────────────────────────────
+describe('POST /api/character/:id/battle/resolve', () => {
+  it('credits exp + gold from the DB monster def and returns the rewards', async () => {
+    const token = await registerAndGetToken('test_battle_ok')
+    const created = await app.inject({
+      method: 'POST', url: '/api/character', headers: { authorization: `Bearer ${token}` },
+      payload: { name: 'B' },
+    })
+    const c0 = (created.json() as { character: { id: string; gold: number; exp: number } }).character
+    // Pick any low-Lv monster so a single kill doesn't push past Lv 10.
+    const monster = await prisma.monster.findFirstOrThrow({ where: { lv: { lte: 3 } } })
+
+    const res = await app.inject({
+      method: 'POST', url: `/api/character/${c0.id}/battle/resolve`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { monsterId: monster.id },
+    })
+    expect(res.statusCode).toBe(200)
+    const body = res.json() as {
+      character: { gold: number; exp: number; lv: number }
+      rewards: { exp: number; gold: number; items: string[]; levelsGained: number }
+    }
+    expect(body.rewards.exp).toBe(monster.exp)
+    // Server adds 0–4 gold bonus on top of the base.
+    expect(body.rewards.gold).toBeGreaterThanOrEqual(monster.gold)
+    expect(body.rewards.gold).toBeLessThanOrEqual(monster.gold + 4)
+    expect(body.character.gold).toBe(c0.gold + body.rewards.gold)
+  })
+
+  it('respects the Slice 29 quest cap — no level past TRANSCEND_LV when not transcended', async () => {
+    const token = await registerAndGetToken('test_battle_capped')
+    const created = await app.inject({
+      method: 'POST', url: '/api/character', headers: { authorization: `Bearer ${token}` },
+      payload: { name: 'Q' },
+    })
+    const id = (created.json() as { character: { id: string } }).character.id
+    // Pin character at exactly TRANSCEND_LV with !transcended → cap applies.
+    await prisma.character.update({
+      where: { id },
+      data: { lv: 10, exp: 0, transcended: false },
+    })
+    const monster = await prisma.monster.findFirstOrThrow()
+    const res = await app.inject({
+      method: 'POST', url: `/api/character/${id}/battle/resolve`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { monsterId: monster.id },
+    })
+    expect(res.statusCode).toBe(200)
+    const body = res.json() as { character: { lv: number; transcended: boolean } }
+    expect(body.character.lv).toBe(10) // capped
+    expect(body.character.transcended).toBe(false)
+  })
+
+  it('returns 404 for an unknown monster id', async () => {
+    const token = await registerAndGetToken('test_battle_unknown')
+    const created = await app.inject({
+      method: 'POST', url: '/api/character', headers: { authorization: `Bearer ${token}` },
+      payload: { name: 'U' },
+    })
+    const id = (created.json() as { character: { id: string } }).character.id
+    const res = await app.inject({
+      method: 'POST', url: `/api/character/${id}/battle/resolve`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { monsterId: 'no-such-monster' },
+    })
+    expect(res.statusCode).toBe(404)
+  })
+
+  it("returns 404 when resolving on another user's character", async () => {
+    const tokenA = await registerAndGetToken('test_battle_a')
+    const createdA = await app.inject({
+      method: 'POST', url: '/api/character', headers: { authorization: `Bearer ${tokenA}` },
+      payload: { name: 'A' },
+    })
+    const id = (createdA.json() as { character: { id: string } }).character.id
+    const tokenB = await registerAndGetToken('test_battle_b')
+    const monster = await prisma.monster.findFirstOrThrow()
+    const res = await app.inject({
+      method: 'POST', url: `/api/character/${id}/battle/resolve`,
+      headers: { authorization: `Bearer ${tokenB}` },
+      payload: { monsterId: monster.id },
+    })
+    expect(res.statusCode).toBe(404)
+  })
+})
+
 describe('DELETE /api/character/:id (Slice 16 slot reclaim)', () => {
   it('removes the character so the slot can be reused', async () => {
     const token = await registerAndGetToken('test_del')

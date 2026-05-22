@@ -18,7 +18,7 @@ import type {
   CharClass,
 } from '@asura/shared'
 import {
-  deriveStats, applyExp, scaleEnemy, rollLoot, rollSpawns,
+  deriveStats, applyExp, scaleEnemy, rollSpawns,
   rollEncounter,
   findPath, type PathStep,
   TRANSCEND_LV, CLASS_CHANGE_LV, expForLv,
@@ -880,30 +880,13 @@ export const useGame = create<Store>()(
           return
         }
 
-        // Victory over the CURRENT enemy: accumulate rewards, then either
-        // move to 'between' (more enemies) or 'finished-win' (last enemy).
-        const expG = b.enemy.exp
-        const goldG = b.enemy.gold + Math.floor(Math.random() * 5)
-        const drops = rollLoot(b.enemy, Math.random)
-        get().gainGold(goldG)
-        for (const itemKey of drops) {
-          get().addItem(itemKey)
-          if (itemKey === 'plus-stone') {
-            get().log(`💠 ได้ หินตีบวก!`, 'good')
-          } else {
-            const it = get().content?.items[itemKey]
-            if (it) get().log(`🎁 ได้ ${it.emoji} ${it.name}!`, 'good')
-          }
-        }
-        get().gainExp(expG)
-        get().pushBattleLog(`🎉 ปราบ ${b.enemy.name} → EXP ${expG}, ทอง ${goldG}`)
-        get().log(`ปราบ ${b.enemy.name} → EXP ${expG}, ทอง ${goldG}`, 'good')
-
-        const rewards = {
-          exp: b.rewards.exp + expG,
-          gold: b.rewards.gold + goldG,
-          items: [...b.rewards.items, ...drops],
-        }
+        // Slice 44: victory rewards are now server-credited. We optimistically
+        // advance the encounter state machine (phase / queue / defeatedCount)
+        // first, then fire-and-forget the resolve API. The server's response
+        // splices the freshly-derived character (with new gold/exp/inventory)
+        // into the store + emits the reward chat log.
+        const monsterId = b.enemy.id
+        const enemyName = b.enemy.name
         const defeatedCount = b.defeatedCount + 1
         const remainingQueue = b.queue.slice(1)
         const isLast = remainingQueue.length === 0
@@ -913,11 +896,71 @@ export const useGame = create<Store>()(
             ...b,
             queue: remainingQueue,
             defeatedCount,
-            rewards,
             phase: isLast ? 'finished-win' : 'between',
             finished: true,
           },
         })
+
+        const token = get().token
+        const id = get().activeCharacterId
+        if (token && id && monsterId) {
+          void (async () => {
+            try {
+              const r = await api.resolveBattle(token, id, monsterId)
+              const { id: _, updatedAt, ...gameState } = r.character
+              void _
+              rememberSync(id, updatedAt)
+              const next = deriveStats(gameState, { items: get().content?.items })
+              useGame.setState({ game: next })
+              lastSavedSnapshot = snapshotOf(next)
+              // Surface the rewards in chat now that they're authoritative.
+              for (const itemKey of r.rewards.items) {
+                if (itemKey === 'plus-stone') {
+                  get().log(`💠 ได้ หินตีบวก!`, 'good')
+                } else {
+                  const it = get().content?.items[itemKey]
+                  if (it) get().log(`🎁 ได้ ${it.emoji} ${it.name}!`, 'good')
+                }
+              }
+              get().pushBattleLog(`🎉 ปราบ ${enemyName} → EXP ${r.rewards.exp}, ทอง ${r.rewards.gold}`)
+              get().log(`ปราบ ${enemyName} → EXP ${r.rewards.exp}, ทอง ${r.rewards.gold}`, 'good')
+              for (let i = 1; i <= r.rewards.levelsGained; i++) {
+                get().log(`🎉 เลเวลอัพ! ตอนนี้ Lv ${next.lv - r.rewards.levelsGained + i}`, 'good')
+              }
+              // Update accumulated UI rewards (used by the post-encounter
+              // summary panel).
+              const cur = get().battle
+              if (cur) {
+                set({
+                  battle: {
+                    ...cur,
+                    rewards: {
+                      exp: cur.rewards.exp + r.rewards.exp,
+                      gold: cur.rewards.gold + r.rewards.gold,
+                      items: [...cur.rewards.items, ...r.rewards.items],
+                    },
+                  },
+                })
+              }
+              // Slice 17 / 26 quest popups — same threshold edges as gainExp.
+              const prevLv = next.lv - r.rewards.levelsGained
+              if (prevLv < TRANSCEND_LV && next.lv >= TRANSCEND_LV
+                  && !next.transcended && get().modal === 'none' && get().screen === 'game') {
+                get().log('✨ ได้เวลาเลือกเผ่าแล้ว! มนุษย์ / มาร / เทพ', 'good')
+                set({ modal: 'race-change' })
+              } else if (prevLv < CLASS_CHANGE_LV && next.lv >= CLASS_CHANGE_LV
+                  && next.transcended && !next.classChanged
+                  && get().modal === 'none' && get().screen === 'game') {
+                get().log('🎯 ได้เวลาเลือกอาชีพสุดท้ายแล้ว!', 'good')
+                set({ modal: 'class-choice' })
+              }
+            } catch (err) {
+              const msg = err instanceof ApiError && err.body && typeof err.body === 'object' && 'error' in err.body
+                ? String((err.body as { error: string }).error) : String(err)
+              get().log(`บันทึก reward ไม่ได้: ${msg}`, 'bad')
+            }
+          })()
+        }
 
         if (isLast) {
           // Spawn tile is consumed only when the WHOLE encounter ends.

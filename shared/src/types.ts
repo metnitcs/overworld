@@ -274,6 +274,11 @@ export interface GameState {
 }
 
 export interface BattleEnemy {
+  /** Slice 44: source MonsterDef.id, so the client can call
+   *  POST /api/character/:id/battle/resolve with the monster identity
+   *  when this enemy is defeated. Optional for back-compat with
+   *  hand-rolled BattleEnemy fixtures in unit tests. */
+  id?: string
   name: string
   emoji: string
   lv: number

@@ -9,7 +9,7 @@ import {
   spendPoints, resetStats,
   applyRaceModifiers, shiftRaceModifierDiff,
   HEAL_FULL_COST,
-  resolveEnhance,
+  resolveEnhance, applyExp, expForLv,
   type PrimaryStat,
 } from '@asura/shared'
 // Slice 28: race + class data lives in DB now (admin-editable). Server
@@ -124,6 +124,14 @@ const craftSchema = z.object({
 const enhanceSchema = z.object({
   itemKey: z.string().min(1),
   slot: z.enum(['_w', '_a']),
+})
+
+/** Slice 44: battle resolution intent. PvE combat itself remains
+ *  client-driven (single-player, no incentive to cheat against yourself),
+ *  but reward award (exp + gold + drops) is server-authoritative so
+ *  inventory/gold mutations never live in the autosave PUT. */
+const battleResolveSchema = z.object({
+  monsterId: z.string().min(1),
 })
 
 const DEFAULT_INVENTORY: Record<string, number> = { 'potion-s': 3 }
@@ -999,6 +1007,110 @@ export function registerCharacterRoutes(app: FastifyInstance): void {
       cost: result.cost,
       stonesConsumed: result.stonesConsumed,
       newPlus: result.newPlus,
+    })
+  })
+
+  // ─── POST /api/character/:id/battle/resolve — Slice 44 intent endpoint ──
+  // Called once per defeated monster from the client's encounter loop.
+  // Server rolls exp, gold, drops (with the 10% plus-stone bonus) from
+  // the DB monster def — client can't fake a Lv 99 dragon kill on a
+  // larva tile. Honors the Slice 29 quest cap (no level-over-threshold
+  // until transcend / class-change resolves).
+  app.post('/api/character/:id/battle/resolve', { preHandler: app.requireAuth }, async (req, reply) => {
+    const parsed = battleResolveSchema.safeParse(req.body)
+    if (!parsed.success) {
+      return reply.code(400).send({ error: 'invalid input', issues: parsed.error.issues })
+    }
+    const { id } = req.params as { id: string }
+    const { monsterId } = parsed.data
+
+    const existing = await app.prisma.character.findUnique({
+      where: { id }, include: { inventory: true },
+    })
+    if (!existing || existing.userId !== req.userId) {
+      return reply.code(404).send({ error: 'character not found' })
+    }
+    const bundle = await app.contentCache.get()
+    const monster = bundle.monsters[monsterId]
+    if (!monster) return reply.code(404).send({ error: 'monster not found' })
+
+    // ─ Reward roll ─
+    const expG = monster.exp
+    const goldG = monster.gold + Math.floor(Math.random() * 5)
+    const dropList: string[] = []
+    // Multi-drop shape from DB (admin can add several).
+    if (monster.drops) {
+      for (const d of monster.drops) {
+        if (Math.random() < d.chance) {
+          const qty = d.minQty + Math.floor(Math.random() * (d.maxQty - d.minQty + 1))
+          for (let i = 0; i < qty; i++) dropList.push(d.item)
+        }
+      }
+    } else if (monster.drop && Math.random() < monster.drop.chance) {
+      // Legacy single-drop fallback for monsters seeded without the
+      // multi shape.
+      dropList.push(monster.drop.item)
+    }
+    if (Math.random() < 0.1) dropList.push('plus-stone')
+
+    // ─ Apply exp with quest-pending cap ─
+    const racePending  = existing.lv >= TRANSCEND_LV   && !existing.transcended
+    const classPending = existing.lv >= CLASS_CHANGE_LV && existing.transcended && !existing.classChanged
+    let newLv = existing.lv
+    let newExp = existing.exp
+    let levelsGained = 0
+    if (racePending || classPending) {
+      const cap = expForLv(existing.lv) - 1
+      newExp = Math.min(existing.exp + expG, cap)
+    } else {
+      const r = applyExp(existing.lv, existing.exp, expG)
+      newLv = r.lv
+      newExp = r.exp
+      levelsGained = r.levelsGained
+    }
+
+    // ─ Re-derive stats only on level up (mirrors client behavior) ─
+    const draft: GameState & { id: string } = {
+      ...toApiCharacter(existing),
+      lv: newLv, exp: newExp, gold: existing.gold + goldG,
+    }
+    const next = levelsGained > 0
+      ? (() => {
+          const d = deriveStats(draft, { items: bundle.items })
+          // Full heal on level-up matches the client store flow.
+          return { ...d, hp: d.maxHp, mp: d.maxMp }
+        })()
+      : draft
+
+    const updated = await app.prisma.$transaction(async (tx) => {
+      await tx.character.update({
+        where: { id: existing.id },
+        data: {
+          lv: next.lv, exp: next.exp, gold: next.gold,
+          hp: next.hp, mp: next.mp,
+          maxHp: next.maxHp, maxMp: next.maxMp,
+          atk: next.atk, def: next.def, spd: next.spd,
+        },
+      })
+      // Group drops by key and upsert qty (handles duplicates from
+      // multi-drop tables or repeated drops in one fight).
+      const dropQty: Record<string, number> = {}
+      for (const k of dropList) dropQty[k] = (dropQty[k] ?? 0) + 1
+      for (const [itemKey, qty] of Object.entries(dropQty)) {
+        await tx.inventoryItem.upsert({
+          where: { characterId_itemKey: { characterId: existing.id, itemKey } },
+          create: { characterId: existing.id, itemKey, qty },
+          update: { qty: { increment: qty } },
+        })
+      }
+      return tx.character.findUniqueOrThrow({
+        where: { id: existing.id }, include: { inventory: true },
+      })
+    })
+
+    return reply.send({
+      character: toApiCharacter(updated),
+      rewards: { exp: expG, gold: goldG, items: dropList, levelsGained },
     })
   })
 
