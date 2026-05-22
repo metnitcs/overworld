@@ -62,6 +62,13 @@ export function registerAuthRoutes(app: FastifyInstance): void {
     if (!user || !(await verifyPassword(password, user.password))) {
       return reply.code(401).send({ error: 'invalid credentials' })
     }
+    // Slice 30: block SUSPENDED / BANNED at login. ACTIVE accounts pass.
+    if (user.status === 'BANNED') {
+      return reply.code(403).send({ error: 'account banned' })
+    }
+    if (user.status === 'SUSPENDED') {
+      return reply.code(403).send({ error: 'account suspended' })
+    }
 
     // Auto-sync role from ADMIN_USERS env on every login. Cheap and lets you
     // promote/demote without manual SQL.

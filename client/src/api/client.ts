@@ -24,7 +24,7 @@ export class ApiError extends Error {
 }
 
 interface RequestOptions {
-  method?: 'GET' | 'POST' | 'PUT' | 'DELETE'
+  method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
   body?: unknown
   token?: string | null
 }
@@ -192,6 +192,7 @@ export interface AdminCharacterRow {
   gold: number
   mapId: string
   transcended: boolean
+  classChanged: boolean
 }
 
 export interface AdminCharacterPatch {
@@ -206,6 +207,46 @@ export interface AdminCharacterPatch {
   def?: number
   spd?: number
   mapId?: string
+  // Slice 30: full character mutation surface
+  str?: number
+  int?: number
+  dex?: number
+  agi?: number
+  luk?: number
+  vit?: number
+  unspentPoints?: number
+  raceId?: string
+  classId?: string
+  transcended?: boolean
+  classChanged?: boolean
+  equipWeapon?: string | null
+  equipArmor?: string | null
+  plus?: Record<string, number>
+  inventory?: Record<string, number>
+}
+
+// ─── Slice 30: User management + Audit log ─────────────────────────────
+
+export type AdminUserStatus = 'ACTIVE' | 'SUSPENDED' | 'BANNED'
+
+export interface AdminUserRow {
+  id: string
+  username: string
+  email: string | null
+  role: 'USER' | 'ADMIN'
+  status: AdminUserStatus
+  createdAt: string
+  characterCount: number
+}
+
+export interface AdminLogRow {
+  id: string
+  actorUserId: string | null
+  action: string
+  targetType: string
+  targetId: string | null
+  payload: unknown
+  createdAt: string
 }
 
 export interface CharacterResponse {
@@ -356,6 +397,28 @@ export const api = {
     request<{ characters: AdminCharacterRow[] }>('/api/admin/characters', { token }),
   adminPatchCharacter: (token: string, id: string, body: AdminCharacterPatch) =>
     request<{ character: unknown }>(`/api/admin/characters/${id}`, { method: 'PUT', token, body }),
+  adminDeleteCharacter: (token: string, id: string) =>
+    request<{ ok: true }>(`/api/admin/characters/${id}`, { method: 'DELETE', token }),
+
+  // Slice 30 — Users + Audit logs
+  adminListUsers: (token: string) =>
+    request<{ users: AdminUserRow[] }>('/api/admin/users', { token }),
+  adminSetUserStatus: (token: string, id: string, status: AdminUserStatus) =>
+    request<{ user: { id: string; status: AdminUserStatus } }>(
+      `/api/admin/users/${id}/status`,
+      { method: 'PATCH', token, body: { status } },
+    ),
+  adminDeleteUser: (token: string, id: string) =>
+    request<{ ok: true }>(`/api/admin/users/${id}`, { method: 'DELETE', token }),
+  adminListLogs: (token: string, opts: { action?: string; targetType?: string; actorUserId?: string; limit?: number } = {}) => {
+    const params = new URLSearchParams()
+    if (opts.action) params.set('action', opts.action)
+    if (opts.targetType) params.set('targetType', opts.targetType)
+    if (opts.actorUserId) params.set('actorUserId', opts.actorUserId)
+    if (opts.limit) params.set('limit', String(opts.limit))
+    const qs = params.toString()
+    return request<{ logs: AdminLogRow[] }>(`/api/admin/logs${qs ? `?${qs}` : ''}`, { token })
+  },
 
   adminReloadCache: (token: string) =>
     request<{ ok: true }>('/api/admin/cache/reload', { method: 'POST', token }),

@@ -491,6 +491,144 @@ describe('admin upload', () => {
   })
 })
 
+describe('admin users (Slice 30)', () => {
+  it('GET /api/admin/users lists all users with status + characterCount', async () => {
+    const adminToken = await registerAndGetToken('test_admin')
+    await registerAndGetToken('test_normal_user')
+    const res = await app.inject({
+      method: 'GET', url: '/api/admin/users',
+      headers: { authorization: `Bearer ${adminToken}` },
+    })
+    expect(res.statusCode).toBe(200)
+    const body = res.json() as { users: Array<{ username: string; status: string; characterCount: number }> }
+    const normal = body.users.find((u) => u.username === 'test_normal_user')
+    expect(normal?.status).toBe('ACTIVE')
+    expect(normal?.characterCount).toBe(0)
+  })
+
+  it('PATCH /api/admin/users/:id/status can SUSPEND a user', async () => {
+    const adminToken = await registerAndGetToken('test_admin')
+    const targetToken = await registerAndGetToken('test_target_suspend')
+    // Decode targetToken... easier: list users + find target id
+    const list = await app.inject({
+      method: 'GET', url: '/api/admin/users',
+      headers: { authorization: `Bearer ${adminToken}` },
+    })
+    const target = (list.json() as { users: Array<{ id: string; username: string }> })
+      .users.find((u) => u.username === 'test_target_suspend')!
+
+    const res = await app.inject({
+      method: 'PATCH', url: `/api/admin/users/${target.id}/status`,
+      headers: { authorization: `Bearer ${adminToken}` },
+      payload: { status: 'SUSPENDED' },
+    })
+    expect(res.statusCode).toBe(200)
+    expect((res.json() as { user: { status: string } }).user.status).toBe('SUSPENDED')
+
+    // Suspended user's existing token should now be rejected on requireAuth routes.
+    const me = await app.inject({
+      method: 'GET', url: '/api/me',
+      headers: { authorization: `Bearer ${targetToken}` },
+    })
+    expect(me.statusCode).toBe(403)
+  })
+
+  it('PATCH /api/admin/users/:id/status refuses self-suspend', async () => {
+    const adminToken = await registerAndGetToken('test_admin')
+    const list = await app.inject({
+      method: 'GET', url: '/api/admin/users',
+      headers: { authorization: `Bearer ${adminToken}` },
+    })
+    const self = (list.json() as { users: Array<{ id: string; username: string }> })
+      .users.find((u) => u.username === 'test_admin')!
+    const res = await app.inject({
+      method: 'PATCH', url: `/api/admin/users/${self.id}/status`,
+      headers: { authorization: `Bearer ${adminToken}` },
+      payload: { status: 'SUSPENDED' },
+    })
+    expect(res.statusCode).toBe(409)
+  })
+
+  it('BANNED user cannot log in', async () => {
+    const adminToken = await registerAndGetToken('test_admin')
+    await registerAndGetToken('test_to_ban')
+    const list = await app.inject({
+      method: 'GET', url: '/api/admin/users',
+      headers: { authorization: `Bearer ${adminToken}` },
+    })
+    const target = (list.json() as { users: Array<{ id: string; username: string }> })
+      .users.find((u) => u.username === 'test_to_ban')!
+    await app.inject({
+      method: 'PATCH', url: `/api/admin/users/${target.id}/status`,
+      headers: { authorization: `Bearer ${adminToken}` },
+      payload: { status: 'BANNED' },
+    })
+
+    const loginRes = await app.inject({
+      method: 'POST', url: '/api/auth/login',
+      payload: { username: 'test_to_ban', password: 'supersecret' },
+    })
+    expect(loginRes.statusCode).toBe(403)
+  })
+})
+
+describe('admin audit log (Slice 30)', () => {
+  it('mutations write to the AuditLog table; GET /api/admin/logs reads back', async () => {
+    const adminToken = await registerAndGetToken('test_admin')
+    // Trigger a known auditable action: cache reload.
+    await app.inject({
+      method: 'POST', url: '/api/admin/cache/reload',
+      headers: { authorization: `Bearer ${adminToken}` },
+    })
+
+    const res = await app.inject({
+      method: 'GET', url: '/api/admin/logs?action=cache.&limit=10',
+      headers: { authorization: `Bearer ${adminToken}` },
+    })
+    expect(res.statusCode).toBe(200)
+    const body = res.json() as { logs: Array<{ action: string; targetType: string }> }
+    expect(body.logs.length).toBeGreaterThan(0)
+    expect(body.logs[0].action).toBe('cache.reload')
+    expect(body.logs[0].targetType).toBe('cache')
+  })
+})
+
+describe('admin character (Slice 30 deep editor)', () => {
+  it('PUT /api/admin/characters/:id can edit primary stats + race/class + flags + inventory', async () => {
+    const adminToken = await registerAndGetToken('test_admin')
+    const userToken = await registerAndGetToken('test_charowner')
+    const created = await app.inject({
+      method: 'POST', url: '/api/character',
+      headers: { authorization: `Bearer ${userToken}` },
+      payload: { name: 'Editable' },
+    })
+    const cid = (created.json() as { character: { id: string } }).character.id
+
+    const res = await app.inject({
+      method: 'PUT', url: `/api/admin/characters/${cid}`,
+      headers: { authorization: `Bearer ${adminToken}` },
+      payload: {
+        lv: 50, str: 25, vit: 30,
+        raceId: 'mara', transcended: true,
+        equipWeapon: 'sword-1',
+        plus: { 'sword-1_w': 3 },
+        inventory: { 'potion-s': 5, 'silk': 10 },
+      },
+    })
+    expect(res.statusCode).toBe(200)
+    const row = await prisma.character.findUnique({
+      where: { id: cid }, include: { inventory: true },
+    })
+    expect(row?.lv).toBe(50)
+    expect(row?.str).toBe(25)
+    expect(row?.raceId).toBe('mara')
+    expect(row?.transcended).toBe(true)
+    expect(row?.equipWeapon).toBe('sword-1')
+    const inv = row?.inventory.reduce((a, i) => ({ ...a, [i.itemKey]: i.qty }), {} as Record<string, number>)
+    expect(inv).toEqual({ 'potion-s': 5, 'silk': 10 })
+  })
+})
+
 describe('admin cache reload', () => {
   it('POST /api/admin/cache/reload returns ok and clears the cache', async () => {
     const token = await registerAndGetToken('test_admin')

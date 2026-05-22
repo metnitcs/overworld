@@ -4,16 +4,17 @@ import {
   api, ApiError, resolveAssetUrl,
   type AdminItemRow, type AdminItemBody, type AdminItemType, type AdminRarity,
   type AdminMonsterRow, type AdminMonsterBody, type AdminMonsterRank, type AdminDropEntry,
-  type AdminCharacterRow,
+  type AdminCharacterRow, type AdminCharacterPatch,
   type AdminMapRow, type AdminMapBody, type AdminTile, type AdminMapMonsterEntry,
   type AdminWarpEntry,
+  type AdminUserRow, type AdminUserStatus, type AdminLogRow,
 } from '../api/client'
 import type { Race, CharClass, StatModifier, Skill, SkillType, PrimaryStat } from '@asura/shared'
 
 /** Slice 20 + 22 — in-game L3 admin dashboard. Gated by role === 'ADMIN'.
  *  All visual styling is namespaced under `.admin-shell` in index.css so it
  *  doesn't fight with the kawaii pre-game palette. */
-type Tab = 'items' | 'monsters' | 'maps' | 'races' | 'classes' | 'characters' | 'cache'
+type Tab = 'items' | 'monsters' | 'maps' | 'races' | 'classes' | 'characters' | 'users' | 'logs' | 'cache'
 
 interface CountState {
   items?: number
@@ -22,6 +23,7 @@ interface CountState {
   races?: number
   classes?: number
   characters?: number
+  users?: number
 }
 
 export function AdminScreen() {
@@ -80,6 +82,8 @@ export function AdminScreen() {
           {tab === 'races' && <RacesTab onCount={(n) => setCounts((c) => ({ ...c, races: n }))} />}
           {tab === 'classes' && <ClassesTab onCount={(n) => setCounts((c) => ({ ...c, classes: n }))} />}
           {tab === 'characters' && <CharactersTab onCount={(n) => setCounts((c) => ({ ...c, characters: n }))} />}
+          {tab === 'users' && <UsersTab onCount={(n) => setCounts((c) => ({ ...c, users: n }))} />}
+          {tab === 'logs' && <LogsTab />}
           {tab === 'cache' && <CacheTab />}
         </div>
       </div>
@@ -99,6 +103,8 @@ function Sidebar({ tab, setTab, counts }: {
     { id: 'races',      label: 'เผ่า',            icon: '🧬', count: counts.races },
     { id: 'classes',    label: 'อาชีพ',           icon: '⚔️', count: counts.classes },
     { id: 'characters', label: 'ตัวละครผู้เล่น',  icon: '🧝', count: counts.characters },
+    { id: 'users',      label: 'บัญชีผู้ใช้',     icon: '👤', count: counts.users },
+    { id: 'logs',       label: 'Audit Logs',     icon: '📜' },
     { id: 'cache',      label: 'แคช / รีโหลด',    icon: '♻️' },
   ]
   return (
@@ -1184,18 +1190,28 @@ function makeBlankLayout(w: number, h: number, from?: AdminTile[][]): AdminTile[
   return out
 }
 
-// ─── Characters tab ────────────────────────────────────────────────────────
+// ─── Characters tab (Slice 30 — full editor) ─────────────────────────────
 
 function CharactersTab({ onCount }: { onCount: (n: number) => void }) {
   const token = useToken()
   const [chars, setChars] = useState<AdminCharacterRow[] | null>(null)
+  const [editing, setEditing] = useState<AdminCharacterRow | null>(null)
+  const [races, setRaces] = useState<Race[]>([])
+  const [classes, setClasses] = useState<CharClass[]>([])
+  const [items, setItems] = useState<AdminItemRow[]>([])
   const [err, setErr] = useState<string | null>(null)
   const [ok, setOk] = useState<string | null>(null)
   const [q, setQ] = useState('')
 
   async function load() {
-    const r = await api.adminListCharacters(token)
+    const [r, rc, cl, it] = await Promise.all([
+      api.adminListCharacters(token),
+      api.adminListRaces(token),
+      api.adminListClasses(token),
+      api.adminListItems(token),
+    ])
     setChars(r.characters); onCount(r.characters.length)
+    setRaces(rc.races); setClasses(cl.classes); setItems(it.items)
   }
   useEffect(() => { void load() }, [])
 
@@ -1208,21 +1224,21 @@ function CharactersTab({ onCount }: { onCount: (n: number) => void }) {
     )
   }, [chars, q])
 
-  async function patch(c: AdminCharacterRow, field: 'lv' | 'exp' | 'gold', delta: number) {
+  async function save(patch: AdminCharacterPatch, id: string, name: string) {
     setErr(null); setOk(null)
-    const val = Math.max(0, c[field] + delta)
     try {
-      await api.adminPatchCharacter(token, c.id, { [field]: val } as never)
-      setOk(`${c.name}: ${field} → ${val}`); await load()
+      await api.adminPatchCharacter(token, id, patch)
+      setOk(`บันทึก ${name} แล้ว`); setEditing(null); await load()
     } catch (e) {
       setErr(e instanceof ApiError ? `${e.status}: ${JSON.stringify(e.body)}` : String(e))
     }
   }
-  async function setField(c: AdminCharacterRow, field: 'lv' | 'exp' | 'gold' | 'mapId', value: number | string) {
+  async function remove(c: AdminCharacterRow) {
+    if (!confirm(`ลบตัวละคร "${c.name}" (user ${c.username})? ไม่สามารถ undo ได้`)) return
     setErr(null); setOk(null)
     try {
-      await api.adminPatchCharacter(token, c.id, { [field]: value } as never)
-      setOk(`${c.name}: ${field} → ${value}`); await load()
+      await api.adminDeleteCharacter(token, c.id)
+      setOk(`ลบ ${c.name}`); await load()
     } catch (e) {
       setErr(e instanceof ApiError ? `${e.status}: ${JSON.stringify(e.body)}` : String(e))
     }
@@ -1234,13 +1250,22 @@ function CharactersTab({ onCount }: { onCount: (n: number) => void }) {
     <div>
       <PageHead
         title="ตัวละครผู้เล่น"
-        desc={`${chars.length} ตัวในระบบ — ปรับ lv / exp / gold / map สำหรับ support`}
+        desc={`${chars.length} ตัวในระบบ — คลิก "แก้" เพื่อปรับทุก field (stats / race / class / inventory)`}
       />
       {ok && <Toast msg={ok} kind="ok" />}
       {err && <Toast msg={err} kind="err" />}
       <div className="admin-toolbar">
         <SearchBar value={q} onChange={setQ} placeholder="ค้นหาด้วยชื่อตัวละครหรือ username…" />
       </div>
+
+      {editing && (
+        <CharacterEditorForm
+          initial={editing} races={races} classes={classes} items={items}
+          onCancel={() => setEditing(null)}
+          onSubmit={(patch) => save(patch, editing.id, editing.name)}
+        />
+      )}
+
       <div className="admin-card">
         {filtered!.length === 0 ? (
           <Empty icon="🧝" title="ไม่พบตัวละครที่ตรง" />
@@ -1249,49 +1274,346 @@ function CharactersTab({ onCount }: { onCount: (n: number) => void }) {
             <thead>
               <tr>
                 <th>User</th><th>Character</th><th>Race / Class</th>
-                <th>Lv</th><th>EXP</th><th>Gold</th><th>Map</th>
+                <th>Lv</th><th>EXP</th><th>Gold</th><th>Map</th><th>Flags</th><th></th>
               </tr>
             </thead>
             <tbody>
               {filtered!.map((c) => (
                 <tr key={c.id}>
                   <td>{c.username}</td>
-                  <td>
-                    <b>{c.name}</b>
-                    {c.transcended && <span className="pill pill-green" style={{ marginLeft: 6 }}>✨ transcended</span>}
-                  </td>
+                  <td><b>{c.name}</b></td>
                   <td style={{ fontSize: 13, color: '#6b7280' }}>{c.raceId} · {c.classId}</td>
+                  <td><b>{c.lv}</b></td>
+                  <td style={{ fontSize: 13, color: '#6b7280' }}>{c.exp}</td>
+                  <td style={{ fontSize: 13 }}>{c.gold.toLocaleString()}</td>
+                  <td style={{ fontSize: 13, color: '#6b7280' }}>{c.mapId}</td>
                   <td>
-                    <div style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                      <button className="btn-a btn-a-small" onClick={() => patch(c, 'lv', -1)}>−</button>
-                      <b style={{ minWidth: 24, textAlign: 'center', display: 'inline-block' }}>{c.lv}</b>
-                      <button className="btn-a btn-a-small" onClick={() => patch(c, 'lv', +1)}>+</button>
-                    </div>
+                    {c.transcended && <span className="pill pill-green">✨</span>}
+                    {' '}
+                    {c.classChanged && <span className="pill pill-purple">🎯</span>}
                   </td>
-                  <td>
-                    <span style={{ marginRight: 6 }}>{c.exp}</span>
-                    <button className="btn-a btn-a-small" onClick={() => setField(c, 'exp', 0)}>reset</button>
-                  </td>
-                  <td>
-                    <div style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                      <button className="btn-a btn-a-small" onClick={() => patch(c, 'gold', -1000)}>−1k</button>
-                      <b style={{ minWidth: 60, textAlign: 'center', display: 'inline-block' }}>{c.gold.toLocaleString()}</b>
-                      <button className="btn-a btn-a-small" onClick={() => patch(c, 'gold', +1000)}>+1k</button>
-                    </div>
-                  </td>
-                  <td>
-                    <input defaultValue={c.mapId} key={c.mapId}
-                      onBlur={(e) => {
-                        const v = e.target.value.trim()
-                        if (v && v !== c.mapId) void setField(c, 'mapId', v)
-                      }}
-                      style={{ width: 130, padding: '6px 10px', border: '1px solid #d1d5db', borderRadius: 4, fontSize: 14 }} />
+                  <td className="row-actions">
+                    <button className="btn-a btn-a-small" onClick={() => setEditing(c)}>แก้</button>
+                    <button className="btn-a btn-a-small btn-a-danger" onClick={() => remove(c)} style={{ marginLeft: 4 }}>ลบ</button>
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
         )}
+      </div>
+    </div>
+  )
+}
+
+function CharacterEditorForm({
+  initial, races, classes, items, onSubmit, onCancel,
+}: {
+  initial: AdminCharacterRow
+  races: Race[]
+  classes: CharClass[]
+  items: AdminItemRow[]
+  onSubmit: (patch: AdminCharacterPatch) => void
+  onCancel: () => void
+}) {
+  // Form state — start with current values from the row (some fields like
+  // primary stats aren't on AdminCharacterRow yet, so we default-fill).
+  const [lv, setLv] = useState(initial.lv)
+  const [exp, setExp] = useState(initial.exp)
+  const [gold, setGold] = useState(initial.gold)
+  const [mapId, setMapId] = useState(initial.mapId)
+  const [raceId, setRaceId] = useState(initial.raceId)
+  const [classId, setClassId] = useState(initial.classId)
+  const [transcended, setTranscended] = useState(initial.transcended)
+  const [classChanged, setClassChanged] = useState(false) // not in row type; admin can flip
+  // Inventory + equip + plus + primary stats are JSON-edited for speed.
+  // (Future: dedicated row editors. JSON keeps the slice tractable.)
+  const [primaryJson, setPrimaryJson] = useState(JSON.stringify({
+    str: 10, int: 10, dex: 10, agi: 10, luk: 10, vit: 10, unspentPoints: 0,
+  }, null, 2))
+  const [inventoryJson, setInventoryJson] = useState('{}')
+  const [equipWeapon, setEquipWeapon] = useState('')
+  const [equipArmor, setEquipArmor] = useState('')
+  const [plusJson, setPlusJson] = useState('{}')
+  const [jsonErr, setJsonErr] = useState<string | null>(null)
+
+  function submit(e: React.FormEvent) {
+    e.preventDefault()
+    setJsonErr(null)
+    let primary: Record<string, number>
+    let inventory: Record<string, number>
+    let plus: Record<string, number>
+    try {
+      primary = JSON.parse(primaryJson)
+      inventory = JSON.parse(inventoryJson)
+      plus = JSON.parse(plusJson)
+    } catch (err) {
+      setJsonErr(`JSON parse error: ${err instanceof Error ? err.message : String(err)}`)
+      return
+    }
+    const patch: AdminCharacterPatch = {
+      lv, exp, gold, mapId, raceId, classId, transcended, classChanged,
+      ...primary,
+      inventory,
+      plus,
+      equipWeapon: equipWeapon === '' ? null : equipWeapon,
+      equipArmor: equipArmor === '' ? null : equipArmor,
+    }
+    onSubmit(patch)
+  }
+
+  return (
+    <form onSubmit={submit} className="admin-form">
+      <div className="admin-form-title">✏️ แก้ตัวละคร: {initial.name} (user: {initial.username})</div>
+
+      <div className="admin-form-row" style={{ gridTemplateColumns: 'repeat(4, 1fr)' }}>
+        <Field label="Lv"><input type="number" min="1" value={lv} onChange={(e) => setLv(Number(e.target.value))} /></Field>
+        <Field label="EXP"><input type="number" min="0" value={exp} onChange={(e) => setExp(Number(e.target.value))} /></Field>
+        <Field label="Gold"><input type="number" min="0" value={gold} onChange={(e) => setGold(Number(e.target.value))} /></Field>
+        <Field label="Map ID"><input value={mapId} onChange={(e) => setMapId(e.target.value)} /></Field>
+      </div>
+
+      <div className="admin-form-row" style={{ gridTemplateColumns: 'repeat(2, 1fr)', marginTop: 12 }}>
+        <Field label="Race">
+          <select value={raceId} onChange={(e) => setRaceId(e.target.value)}>
+            {races.map((r) => <option key={r.id} value={r.id}>{r.emoji} {r.id} — {r.name}</option>)}
+          </select>
+        </Field>
+        <Field label="Class">
+          <select value={classId} onChange={(e) => setClassId(e.target.value)}>
+            {classes.map((c) => <option key={c.id} value={c.id}>{c.emoji} {c.id} — {c.name}</option>)}
+          </select>
+        </Field>
+      </div>
+
+      <div style={{ marginTop: 12, display: 'flex', gap: 16 }}>
+        <label style={{ fontSize: 13 }}>
+          <input type="checkbox" checked={transcended} onChange={(e) => setTranscended(e.target.checked)} />
+          {' '}transcended (ผ่าน Lv 10 race quest)
+        </label>
+        <label style={{ fontSize: 13 }}>
+          <input type="checkbox" checked={classChanged} onChange={(e) => setClassChanged(e.target.checked)} />
+          {' '}classChanged (ผ่าน Lv 120 class quest)
+        </label>
+      </div>
+
+      <div className="admin-form-row" style={{ gridTemplateColumns: 'repeat(2, 1fr)', marginTop: 12 }}>
+        <Field label="Equip Weapon (item id หรือเว้นว่าง)">
+          <select value={equipWeapon} onChange={(e) => setEquipWeapon(e.target.value)}>
+            <option value="">(none)</option>
+            {items.filter((it) => it.type === 'weapon').map((it) => (
+              <option key={it.id} value={it.id}>{it.emoji} {it.id} — {it.name}</option>
+            ))}
+          </select>
+        </Field>
+        <Field label="Equip Armor">
+          <select value={equipArmor} onChange={(e) => setEquipArmor(e.target.value)}>
+            <option value="">(none)</option>
+            {items.filter((it) => it.type === 'armor').map((it) => (
+              <option key={it.id} value={it.id}>{it.emoji} {it.id} — {it.name}</option>
+            ))}
+          </select>
+        </Field>
+      </div>
+
+      <div style={{ marginTop: 12, fontSize: 12, color: '#6b7280' }}>
+        ⚠️ Primary stats / Inventory / Plus ใช้ JSON edit (ช่อง textarea ข้างล่าง) — เพราะ row ปัจจุบันยังไม่คืน fields นี้กลับมา ให้ค้นหา UI ละเอียดในสไลซ์ถัดไป
+      </div>
+
+      <div className="admin-form-row" style={{ gridTemplateColumns: 'repeat(3, 1fr)', marginTop: 6 }}>
+        <Field label='Primary stats JSON — { "str":10, "int":10, "dex":10, "agi":10, "luk":10, "vit":10, "unspentPoints":0 }'>
+          <textarea value={primaryJson} onChange={(e) => setPrimaryJson(e.target.value)} rows={6}
+            style={{ fontFamily: 'monospace', fontSize: 11, resize: 'vertical' }} />
+        </Field>
+        <Field label='Inventory JSON — { "itemKey": qty, ... }'>
+          <textarea value={inventoryJson} onChange={(e) => setInventoryJson(e.target.value)} rows={6}
+            style={{ fontFamily: 'monospace', fontSize: 11, resize: 'vertical' }} />
+        </Field>
+        <Field label='Plus level JSON — { "sword-1_w": 5, "armor-1_a": 3 }'>
+          <textarea value={plusJson} onChange={(e) => setPlusJson(e.target.value)} rows={6}
+            style={{ fontFamily: 'monospace', fontSize: 11, resize: 'vertical' }} />
+        </Field>
+      </div>
+
+      {jsonErr && <Toast msg={jsonErr} kind="err" />}
+
+      <div className="admin-form-foot">
+        <button type="button" className="btn-a" onClick={onCancel}>ยกเลิก</button>
+        <button type="submit" className="btn-a btn-a-primary">บันทึก</button>
+      </div>
+    </form>
+  )
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Slice 30 — Users tab + Logs tab
+// ═══════════════════════════════════════════════════════════════════════
+
+const STATUS_PILL: Record<AdminUserStatus, string> = {
+  ACTIVE: 'pill-green',
+  SUSPENDED: 'pill-yellow',
+  BANNED: 'pill-red',
+}
+
+function UsersTab({ onCount }: { onCount: (n: number) => void }) {
+  const token = useToken()
+  const [users, setUsers] = useState<AdminUserRow[] | null>(null)
+  const [err, setErr] = useState<string | null>(null)
+  const [ok, setOk] = useState<string | null>(null)
+  const [q, setQ] = useState('')
+
+  async function load() {
+    const r = await api.adminListUsers(token)
+    setUsers(r.users); onCount(r.users.length)
+  }
+  useEffect(() => { void load() }, [])
+
+  const filtered = useMemo(() => {
+    if (!users) return null
+    const needle = q.trim().toLowerCase()
+    if (!needle) return users
+    return users.filter((u) =>
+      u.username.toLowerCase().includes(needle) ||
+      (u.email?.toLowerCase().includes(needle) ?? false),
+    )
+  }, [users, q])
+
+  async function setStatus(u: AdminUserRow, status: AdminUserStatus) {
+    setErr(null); setOk(null)
+    try {
+      await api.adminSetUserStatus(token, u.id, status)
+      setOk(`${u.username}: ${u.status} → ${status}`); await load()
+    } catch (e) {
+      setErr(e instanceof ApiError ? `${e.status}: ${JSON.stringify(e.body)}` : String(e))
+    }
+  }
+  async function remove(u: AdminUserRow) {
+    if (!confirm(`ลบบัญชี "${u.username}"? ตัวละครทั้งหมดของบัญชีนี้จะถูกลบด้วย — ไม่สามารถ undo ได้`)) return
+    setErr(null); setOk(null)
+    try {
+      await api.adminDeleteUser(token, u.id)
+      setOk(`ลบ ${u.username}`); await load()
+    } catch (e) {
+      setErr(e instanceof ApiError ? `${e.status}: ${JSON.stringify(e.body)}` : String(e))
+    }
+  }
+
+  if (!users) return <div className="admin-loading">กำลังโหลด…</div>
+
+  return (
+    <div>
+      <PageHead title="บัญชีผู้ใช้" desc={`${users.length} บัญชี — ปรับสถานะ (ACTIVE / SUSPENDED / BANNED) หรือลบบัญชี`} />
+      {ok && <Toast msg={ok} kind="ok" />}
+      {err && <Toast msg={err} kind="err" />}
+      <div className="admin-toolbar">
+        <SearchBar value={q} onChange={setQ} placeholder="ค้นหา username หรือ email…" />
+      </div>
+      <div className="admin-card">
+        {filtered!.length === 0 ? <Empty icon="👤" title="ไม่พบผู้ใช้" /> : (
+          <table className="admin-table">
+            <thead>
+              <tr><th>Username</th><th>Email</th><th>Role</th><th>Status</th><th>Chars</th><th>Created</th><th></th></tr>
+            </thead>
+            <tbody>
+              {filtered!.map((u) => (
+                <tr key={u.id}>
+                  <td><b>{u.username}</b></td>
+                  <td style={{ fontSize: 13, color: '#6b7280' }}>{u.email ?? '—'}</td>
+                  <td>
+                    {u.role === 'ADMIN'
+                      ? <span className="pill pill-purple">ADMIN</span>
+                      : <span className="pill pill-gray">USER</span>}
+                  </td>
+                  <td><span className={`pill ${STATUS_PILL[u.status]}`}>{u.status}</span></td>
+                  <td style={{ fontSize: 13 }}>{u.characterCount}</td>
+                  <td style={{ fontSize: 11, color: '#6b7280' }}>
+                    {new Date(u.createdAt).toLocaleDateString('th-TH')}
+                  </td>
+                  <td className="row-actions">
+                    <select value={u.status} onChange={(e) => setStatus(u, e.target.value as AdminUserStatus)}
+                      style={{ fontSize: 12, padding: '4px 6px', border: '1px solid #d1d5db', borderRadius: 4 }}>
+                      <option value="ACTIVE">ACTIVE</option>
+                      <option value="SUSPENDED">SUSPENDED</option>
+                      <option value="BANNED">BANNED</option>
+                    </select>
+                    <button className="btn-a btn-a-small btn-a-danger" onClick={() => remove(u)} style={{ marginLeft: 4 }}>ลบ</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function LogsTab() {
+  const token = useToken()
+  const [logs, setLogs] = useState<AdminLogRow[] | null>(null)
+  const [action, setAction] = useState('')
+  const [targetType, setTargetType] = useState('')
+  const [err, setErr] = useState<string | null>(null)
+
+  async function load() {
+    setErr(null)
+    try {
+      const r = await api.adminListLogs(token, {
+        action: action || undefined,
+        targetType: targetType || undefined,
+        limit: 100,
+      })
+      setLogs(r.logs)
+    } catch (e) {
+      setErr(e instanceof ApiError ? `${e.status}: ${JSON.stringify(e.body)}` : String(e))
+    }
+  }
+  useEffect(() => { void load() }, [])
+
+  return (
+    <div>
+      <PageHead title="Audit Logs" desc="ทุกการแก้ไขผ่าน /api/admin/* จะถูกบันทึกที่นี่ (100 รายการล่าสุด)" />
+      {err && <Toast msg={err} kind="err" />}
+
+      <div className="admin-toolbar">
+        <div className="admin-search" style={{ flex: 1 }}>
+          <input placeholder="กรอง action (เช่น character. หรือ user.)" value={action}
+            onChange={(e) => setAction(e.target.value)} />
+        </div>
+        <div className="admin-search" style={{ flex: 1 }}>
+          <input placeholder="กรอง targetType (เช่น item, monster, character, user)"
+            value={targetType} onChange={(e) => setTargetType(e.target.value)} />
+        </div>
+        <button className="btn-a btn-a-primary" onClick={() => void load()}>🔍 ค้นหา</button>
+      </div>
+
+      <div className="admin-card">
+        {!logs ? <div className="admin-loading">กำลังโหลด…</div>
+          : logs.length === 0 ? <Empty icon="📜" title="ไม่มี log ตรงเงื่อนไข" />
+          : (
+            <table className="admin-table">
+              <thead>
+                <tr><th>เมื่อ</th><th>Actor</th><th>Action</th><th>Target</th><th>Payload</th></tr>
+              </thead>
+              <tbody>
+                {logs.map((l) => (
+                  <tr key={l.id}>
+                    <td style={{ fontSize: 11, color: '#6b7280', whiteSpace: 'nowrap' }}>
+                      {new Date(l.createdAt).toLocaleString('th-TH')}
+                    </td>
+                    <td style={{ fontSize: 12, fontFamily: 'monospace' }}>{l.actorUserId ?? 'system'}</td>
+                    <td><span className="pill pill-blue">{l.action}</span></td>
+                    <td style={{ fontSize: 12 }}>
+                      {l.targetType}{l.targetId && <span style={{ color: '#9ca3af' }}> · {l.targetId.slice(0, 8)}…</span>}
+                    </td>
+                    <td style={{ fontSize: 11, fontFamily: 'monospace', color: '#6b7280', maxWidth: 400, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {l.payload ? JSON.stringify(l.payload).slice(0, 120) : '—'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
       </div>
     </div>
   )

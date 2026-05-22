@@ -25,6 +25,16 @@ declare module 'fastify' {
     adminUsers: Set<string>
     /** Slice 21: absolute path to the uploads dir (mirrors fastify-static root). */
     uploadsDir: string
+    /** Slice 30: write an audit-log row. Fire-and-forget — errors are
+     *  logged but never thrown so a logging failure can't break the
+     *  primary mutation. */
+    audit: (params: {
+      actorUserId: string | null
+      action: string
+      targetType: string
+      targetId?: string | null
+      payload?: unknown
+    }) => Promise<void>
   }
 }
 
@@ -84,7 +94,25 @@ export function buildServer(opts: BuildServerOptions): FastifyInstance {
   app.decorate('jwtSecret', opts.jwtSecret)
   app.decorate('adminUsers', adminUsers)
   app.decorate('uploadsDir', uploadsDir)
-  app.decorate('requireAuth', makeRequireAuth(opts.jwtSecret))
+  // Slice 30: audit decorator. Best-effort — if the insert fails we log
+  // to console but never throw, so a busted audit table can't take down
+  // the primary mutation. payload is normalised to a JSON-safe object.
+  app.decorate('audit', async ({ actorUserId, action, targetType, targetId, payload }) => {
+    try {
+      await opts.prisma.auditLog.create({
+        data: {
+          actorUserId: actorUserId ?? null,
+          action,
+          targetType,
+          targetId: targetId ?? null,
+          payload: payload === undefined ? null : JSON.parse(JSON.stringify(payload)),
+        },
+      })
+    } catch (err) {
+      app.log.warn({ err, action, targetType, targetId }, 'audit log insert failed')
+    }
+  })
+  app.decorate('requireAuth', makeRequireAuth(opts.jwtSecret, opts.prisma))
   app.decorate('requireAdmin', makeRequireAdmin(opts.jwtSecret, opts.prisma))
   app.decorate('contentCache', new ContentCache(opts.prisma))
 

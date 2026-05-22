@@ -13,6 +13,15 @@ enum Role {
   ADMIN
 }
 
+/// Slice 30: account lifecycle status.
+/// ACTIVE = normal; SUSPENDED = blocked at login until lifted; BANNED =
+/// permanent block. Admin-only mutation via /api/admin/users.
+enum UserStatus {
+  ACTIVE
+  SUSPENDED
+  BANNED
+}
+
 model User {
   id         String      @id @default(cuid())
   username   String      @unique
@@ -21,8 +30,32 @@ model User {
   /// Slice 20: role-based gating for /api/admin/*. Bootstrapped via the
   /// ADMIN_USERS env (comma-separated usernames) at register/login time.
   role       Role        @default(USER)
+  /// Slice 30: account status. SUSPENDED + BANNED both reject login;
+  /// the difference is just the displayed reason + intent.
+  status     UserStatus  @default(ACTIVE)
   createdAt  DateTime    @default(now())
   characters Character[]
+}
+
+/// Slice 30: audit trail for every admin mutation. Written by the
+/// `app.audit(...)` decorator. Read-only via /api/admin/logs.
+model AuditLog {
+  id           String   @id @default(cuid())
+  /// User who performed the action. Null = system / unauthenticated.
+  actorUserId  String?
+  /// e.g. 'item.update', 'character.delete', 'user.suspend', 'cache.reload'
+  action       String
+  /// Target row type — 'item', 'monster', 'map', 'character', 'user', etc.
+  targetType   String
+  /// Target row id when applicable.
+  targetId     String?
+  /// Free-form snapshot: what changed, request payload, etc.
+  payload      Json?
+  createdAt    DateTime @default(now())
+
+  @@index([actorUserId])
+  @@index([targetType, targetId])
+  @@index([createdAt])
 }
 
 model Character {

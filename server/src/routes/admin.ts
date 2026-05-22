@@ -139,6 +139,11 @@ const classCreateBody = classBody.extend({
   id: z.string().min(1).regex(/^[a-z0-9-]+$/, 'lowercase-kebab-case only'),
 })
 
+// ─── Slice 30: User management + Audit log ─────────────────────────────
+const userStatusBody = z.object({
+  status: z.enum(['ACTIVE', 'SUSPENDED', 'BANNED']),
+})
+
 const characterPatch = z.object({
   lv: z.number().int().min(1).optional(),
   exp: z.number().int().min(0).optional(),
@@ -151,6 +156,23 @@ const characterPatch = z.object({
   def: z.number().int().min(0).optional(),
   spd: z.number().int().min(0).optional(),
   mapId: z.string().optional(),
+  // Slice 30: primary stats + flags + race/class + equipment + inventory
+  // — full character mutation for admin support.
+  str: z.number().int().min(1).max(500).optional(),
+  int: z.number().int().min(1).max(500).optional(),
+  dex: z.number().int().min(1).max(500).optional(),
+  agi: z.number().int().min(1).max(500).optional(),
+  luk: z.number().int().min(1).max(500).optional(),
+  vit: z.number().int().min(1).max(500).optional(),
+  unspentPoints: z.number().int().min(0).optional(),
+  raceId: z.string().optional(),
+  classId: z.string().optional(),
+  transcended: z.boolean().optional(),
+  classChanged: z.boolean().optional(),
+  equipWeapon: z.string().nullable().optional(),
+  equipArmor: z.string().nullable().optional(),
+  plus: z.record(z.string(), z.number().int().min(0)).optional(),
+  inventory: z.record(z.string(), z.number().int().min(0)).optional(),
 })
 
 // ─── Routes ──────────────────────────────────────────────────────────────
@@ -539,6 +561,7 @@ export function registerAdminRoutes(app: FastifyInstance): void {
         gold: c.gold,
         mapId: c.mapId,
         transcended: c.transcended,
+        classChanged: c.classChanged,
       })),
     })
   })
@@ -549,10 +572,128 @@ export function registerAdminRoutes(app: FastifyInstance): void {
     const { id } = req.params as { id: string }
     const exists = await app.prisma.character.findUnique({ where: { id } })
     if (!exists) return reply.code(404).send({ error: 'character not found' })
-    const updated = await app.prisma.character.update({
-      where: { id }, data: parsed.data,
+    // Slice 30: inventory is a separate table — split it out of the
+    // scalar update + apply it in a transaction (mirrors PUT /api/character/:id).
+    const { inventory, ...scalars } = parsed.data
+    const updated = await app.prisma.$transaction(async (tx) => {
+      const row = await tx.character.update({
+        where: { id },
+        data: scalars,
+      })
+      if (inventory !== undefined) {
+        await tx.inventoryItem.deleteMany({ where: { characterId: id } })
+        const entries = Object.entries(inventory).filter(([, qty]) => qty > 0)
+        if (entries.length > 0) {
+          await tx.inventoryItem.createMany({
+            data: entries.map(([itemKey, qty]) => ({
+              characterId: id, itemKey, qty,
+            })),
+          })
+        }
+      }
+      return row
+    })
+    await app.audit({
+      actorUserId: req.userId, action: 'character.update',
+      targetType: 'character', targetId: id, payload: parsed.data,
     })
     return reply.send({ character: updated })
+  })
+
+  app.delete('/api/admin/characters/:id', guard, async (req, reply) => {
+    const { id } = req.params as { id: string }
+    const exists = await app.prisma.character.findUnique({ where: { id } })
+    if (!exists) return reply.code(404).send({ error: 'character not found' })
+    await app.prisma.character.delete({ where: { id } })
+    await app.audit({
+      actorUserId: req.userId, action: 'character.delete',
+      targetType: 'character', targetId: id,
+      payload: { name: exists.name, userId: exists.userId, lv: exists.lv },
+    })
+    return reply.send({ ok: true })
+  })
+
+  // ── Users (Slice 30) ──
+  // List all users with their account status + char count. Read-only
+  // summary — passwords are NEVER returned.
+  app.get('/api/admin/users', guard, async (_req, reply) => {
+    const users = await app.prisma.user.findMany({
+      select: {
+        id: true, username: true, email: true, role: true, status: true,
+        createdAt: true,
+        _count: { select: { characters: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 500,
+    })
+    return reply.send({
+      users: users.map((u) => ({
+        id: u.id,
+        username: u.username,
+        email: u.email,
+        role: u.role,
+        status: u.status,
+        createdAt: u.createdAt,
+        characterCount: u._count.characters,
+      })),
+    })
+  })
+
+  app.patch('/api/admin/users/:id/status', guard, async (req, reply) => {
+    const parsed = userStatusBody.safeParse(req.body)
+    if (!parsed.success) return reply.code(400).send({ error: 'invalid input', issues: parsed.error.issues })
+    const { id } = req.params as { id: string }
+    const exists = await app.prisma.user.findUnique({ where: { id } })
+    if (!exists) return reply.code(404).send({ error: 'user not found' })
+    // Guard: don't let an admin lock themselves out.
+    if (id === req.userId && parsed.data.status !== 'ACTIVE') {
+      return reply.code(409).send({ error: 'cannot suspend or ban your own account' })
+    }
+    const updated = await app.prisma.user.update({
+      where: { id }, data: { status: parsed.data.status },
+      select: { id: true, username: true, status: true, role: true },
+    })
+    await app.audit({
+      actorUserId: req.userId,
+      action: `user.${parsed.data.status.toLowerCase()}`,
+      targetType: 'user', targetId: id,
+      payload: { from: exists.status, to: parsed.data.status, username: exists.username },
+    })
+    return reply.send({ user: updated })
+  })
+
+  app.delete('/api/admin/users/:id', guard, async (req, reply) => {
+    const { id } = req.params as { id: string }
+    if (id === req.userId) {
+      return reply.code(409).send({ error: 'cannot delete your own account' })
+    }
+    const exists = await app.prisma.user.findUnique({ where: { id } })
+    if (!exists) return reply.code(404).send({ error: 'user not found' })
+    // Characters cascade-delete via the User → Character relation onDelete:Cascade.
+    await app.prisma.user.delete({ where: { id } })
+    await app.audit({
+      actorUserId: req.userId, action: 'user.delete',
+      targetType: 'user', targetId: id, payload: { username: exists.username },
+    })
+    return reply.send({ ok: true })
+  })
+
+  // ── Audit log (Slice 30) ──
+  // Paginated read of recent actions. Supports filtering by actor, target
+  // type, or action prefix via query string.
+  app.get('/api/admin/logs', guard, async (req, reply) => {
+    const q = req.query as Record<string, string | undefined>
+    const where: Record<string, unknown> = {}
+    if (q.actorUserId) where.actorUserId = q.actorUserId
+    if (q.targetType) where.targetType = q.targetType
+    if (q.action) where.action = { startsWith: q.action }
+    const limit = Math.min(Math.max(Number(q.limit) || 100, 1), 500)
+    const logs = await app.prisma.auditLog.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+      take: limit,
+    })
+    return reply.send({ logs })
   })
 
   // ── Upload (Slice 21) ──
@@ -589,8 +730,12 @@ export function registerAdminRoutes(app: FastifyInstance): void {
   })
 
   // ── Cache reload ──
-  app.post('/api/admin/cache/reload', guard, async (_req, reply) => {
+  app.post('/api/admin/cache/reload', guard, async (req, reply) => {
     app.contentCache.invalidate()
+    await app.audit({
+      actorUserId: req.userId, action: 'cache.reload',
+      targetType: 'cache',
+    })
     return reply.send({ ok: true })
   })
 }
