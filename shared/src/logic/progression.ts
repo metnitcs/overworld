@@ -1,9 +1,13 @@
-import { expForLv } from '../data.js'
+import { expForLv, STAT_POINTS_PER_LEVEL } from '../data.js'
 
 export interface ExpResult {
   lv: number
   exp: number
   levelsGained: number
+  /** Slice 23: stat points the caller should add to `unspentPoints` —
+   *  STAT_POINTS_PER_LEVEL × levelsGained. Returned here so call sites don't
+   *  duplicate the constant. */
+  pointsGained: number
 }
 
 /** Apply gained exp to a level/exp pair, levelling up (and carrying the
@@ -17,5 +21,10 @@ export function applyExp(lv: number, exp: number, amt: number): ExpResult {
     newLv += 1
     levelsGained += 1
   }
-  return { lv: newLv, exp: newExp, levelsGained }
+  return {
+    lv: newLv,
+    exp: newExp,
+    levelsGained,
+    pointsGained: levelsGained * STAT_POINTS_PER_LEVEL,
+  }
 }

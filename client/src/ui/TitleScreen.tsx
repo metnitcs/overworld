@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useGame } from '../game/store'
+import { ApiError } from '../api/client'
 
 // ──────────────────────────────────────────────────────────────
 // Portal — the front page of อสูรเว็บ Online.
-// Rendered when store.screen === 'title' (kept that value so existing
-// saves still resolve here). Lives in the Mochi design system; see
-// docs/adr/0001-dual-design-system-pre-game-vs-in-game.md.
+// Rendered when store.screen === 'title'. Uses the Mochi design
+// system layered with the Asura dark-MMORPG override (see index.css).
 // ──────────────────────────────────────────────────────────────
 
 const PALETTES: Array<[string, string]> = [
@@ -43,6 +43,9 @@ export function TitleScreen() {
   const setModal = useGame(s => s.setModal)
   const loadFromStorage = useGame(s => s.loadFromStorage)
   const hasSave = useGame(s => s.hasSave)
+  const token = useGame(s => s.token)
+  const username = useGame(s => s.username)
+  const logout = useGame(s => s.logout)
 
   const [nav, setNav] = useState(0)
   const [now, setNow] = useState(new Date())
@@ -60,22 +63,41 @@ export function TitleScreen() {
     setTimeout(() => setToast(''), 2200)
   }
 
-  function startGame() {
+  async function startGame() {
+    if (!token) {
+      showToast('กรุณาเข้าสู่ระบบก่อนเริ่มเล่น')
+      return
+    }
     if (hasSave) {
-      loadFromStorage()
+      try {
+        await loadFromStorage()
+      } catch {
+        setScreen('create')
+      }
     } else {
       setScreen('create')
     }
   }
 
   return (
-    <div className="mochi mochi-page">
-      <TopBar nav={nav} setNav={setNav} />
+    <div className="mochi asura mochi-page">
+      <TopBar
+        nav={nav}
+        setNav={setNav}
+        username={username}
+        onLogout={logout}
+        onLoginScroll={() => {
+          document.querySelector('.login-panel')?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+        }}
+      />
 
       <Hero
         onStart={startGame}
         onHelp={() => setModal('help')}
         hasSave={hasSave}
+        loggedIn={!!token}
+        username={username}
+        onToast={showToast}
       />
 
       <div className="container">
@@ -102,7 +124,12 @@ export function TitleScreen() {
 }
 
 // ============ TOP NAV ============
-function TopBar({ nav, setNav }: { nav: number; setNav: (n: number) => void }) {
+function TopBar({
+  nav, setNav, username, onLogout, onLoginScroll,
+}: {
+  nav: number; setNav: (n: number) => void;
+  username: string | null; onLogout: () => void; onLoginScroll: () => void;
+}) {
   const items = ['หน้าหลัก', 'ข้อมูลเกม', 'ข่าว', 'เว็บบอร์ด', 'ติดต่อ']
   return (
     <header className="topbar">
@@ -117,12 +144,19 @@ function TopBar({ nav, setNav }: { nav: number; setNav: (n: number) => void }) {
           ))}
         </nav>
         <div className="nav-right">
-          <div className="currency-pills">
-            <div className="cpill"><span className="cico gold">G</span>368</div>
-            <div className="cpill"><span className="cico dia">D</span>23</div>
-            <div className="cpill"><span className="cico stamp">S</span>5.2k</div>
-          </div>
-          <div className="nav-avatar" title="นักผจญภัย">อ</div>
+          {username ? (
+            <>
+              <div className="currency-pills">
+                <div className="cpill"><span className="cico gold">G</span>368</div>
+                <div className="cpill"><span className="cico dia">D</span>23</div>
+                <div className="cpill"><span className="cico stamp">S</span>5.2k</div>
+              </div>
+              <div className="nav-avatar" title={username}>{username[0]?.toUpperCase() || 'อ'}</div>
+              <button className="nav-logout" onClick={onLogout} title="ออกจากระบบ">ออก</button>
+            </>
+          ) : (
+            <button className="nav-login-btn" onClick={onLoginScroll}>เข้าสู่ระบบ</button>
+          )}
         </div>
       </div>
     </header>
@@ -130,7 +164,12 @@ function TopBar({ nav, setNav }: { nav: number; setNav: (n: number) => void }) {
 }
 
 // ============ HERO ============
-function Hero({ onStart, onHelp, hasSave }: { onStart: () => void; onHelp: () => void; hasSave: boolean }) {
+function Hero({
+  onStart, onHelp, hasSave, loggedIn, username, onToast,
+}: {
+  onStart: () => void; onHelp: () => void; hasSave: boolean;
+  loggedIn: boolean; username: string | null; onToast: (s: string) => void;
+}) {
   return (
     <section className="hero">
       <div className="hero-text">
@@ -141,8 +180,8 @@ function Hero({ onStart, onHelp, hasSave }: { onStart: () => void; onHelp: () =>
           คราฟอาวุธ, ตีบวก, เดินสำรวจ 5 แมพต่อเนื่องจากหมู่บ้านไปจนถึงนรกลึก
         </p>
         <div className="hero-cta">
-          <button className="btn btn-primary" onClick={onStart}>
-            {hasSave ? 'เล่นต่อจากเซฟ' : 'เริ่มเล่นเกม'} <span className="arrow">→</span>
+          <button className="btn btn-primary" onClick={onStart} disabled={!loggedIn}>
+            {loggedIn ? (hasSave ? 'เล่นต่อจากเซฟ' : 'เริ่มเล่นเกม') : 'ล็อก — กรุณาเข้าสู่ระบบ'} <span className="arrow">→</span>
           </button>
           <button className="btn btn-secondary" onClick={onHelp}>ดูวิธีเล่น</button>
         </div>
@@ -161,27 +200,103 @@ function Hero({ onStart, onHelp, hasSave }: { onStart: () => void; onHelp: () =>
           </div>
         </div>
       </div>
-      <div className="hero-art">
-        <div className="placeholder">
-          <span className="big">Character / Mascot Art</span>
-          แทรกภาพหลัก 800×640 PNG
-        </div>
-        <div className="floating-tag top">
-          <div className="icon">⚔</div>
-          <div>
-            <div className="v">Lv 99</div>
-            <div className="l">เลเวลสูงสุดในเซิร์ฟเวอร์</div>
-          </div>
-        </div>
-        <div className="floating-tag bottom">
-          <div className="icon">✦</div>
-          <div>
-            <div className="v">Beta 0.2</div>
-            <div className="l">ปล่อยล่าสุด · React + Phaser</div>
-          </div>
-        </div>
-      </div>
+
+      <LoginPanel loggedIn={loggedIn} username={username} onStart={onStart} onToast={onToast} hasSave={hasSave} />
     </section>
+  )
+}
+
+// ============ LOGIN PANEL ============
+function LoginPanel({
+  loggedIn, username, onStart, onToast, hasSave,
+}: {
+  loggedIn: boolean; username: string | null; onStart: () => void; onToast: (s: string) => void; hasSave: boolean;
+}) {
+  const register = useGame(s => s.register)
+  const login = useGame(s => s.login)
+  const [tab, setTab] = useState<'login' | 'register'>('login')
+  const [u, setU] = useState('')
+  const [p, setP] = useState('')
+  const [err, setErr] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault()
+    setErr(null)
+    if (u.trim().length < 3) { setErr('ชื่อผู้ใช้อย่างน้อย 3 ตัวอักษร'); return }
+    if (p.length < 6) { setErr('รหัสผ่านอย่างน้อย 6 ตัวอักษร'); return }
+    setBusy(true)
+    try {
+      if (tab === 'login') {
+        await login(u.trim(), p)
+        onToast(`ยินดีต้อนรับกลับ ${u.trim()}`)
+      } else {
+        await register(u.trim(), p)
+        onToast(`สร้างบัญชี ${u.trim()} สำเร็จ`)
+      }
+    } catch (e) {
+      if (e instanceof ApiError) {
+        const body = (e.body && typeof e.body === 'object') ? e.body as { error?: string } : {}
+        setErr(body.error ?? (e.status === 401 ? 'ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง'
+                          : e.status === 409 ? 'มีผู้ใช้งานชื่อนี้แล้ว'
+                          : `เกิดข้อผิดพลาด (${e.status})`))
+      } else {
+        setErr('เชื่อมต่อเซิร์ฟเวอร์ไม่ได้')
+      }
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  if (loggedIn) {
+    return (
+      <div className="login-panel">
+        <div className="login-head">
+          <div className="crest">อ</div>
+          <h3>ยินดีต้อนรับสู่ดินแดนอสูร</h3>
+          <div className="sub">PLAYER LOGGED IN</div>
+        </div>
+        <div className="login-welcome">
+          <div className="greet">สวัสดี <span className="name">{username}</span></div>
+          <div className="sub">{hasSave ? 'ตัวละครของคุณรออยู่ในเซิร์ฟเวอร์' : 'ยังไม่มีตัวละคร — กดเริ่มเล่นเพื่อสร้าง'}</div>
+        </div>
+        <button className="btn btn-primary login-submit" onClick={onStart}>
+          {hasSave ? 'เข้าเล่นต่อ' : 'สร้างตัวละครใหม่'} <span className="arrow">→</span>
+        </button>
+      </div>
+    )
+  }
+
+  return (
+    <form className="login-panel" onSubmit={submit}>
+      <div className="login-head">
+        <div className="crest">อ</div>
+        <h3>เข้าสู่ดินแดนอสูร</h3>
+        <div className="sub">ENTER THE REALM</div>
+      </div>
+      <div className="login-tabs">
+        <button type="button" className={tab === 'login' ? 'active' : ''} onClick={() => { setTab('login'); setErr(null) }}>เข้าสู่ระบบ</button>
+        <button type="button" className={tab === 'register' ? 'active' : ''} onClick={() => { setTab('register'); setErr(null) }}>สมัครสมาชิก</button>
+      </div>
+      <div className="login-field">
+        <label htmlFor="lp-user">ชื่อผู้ใช้</label>
+        <input id="lp-user" type="text" autoComplete="username" placeholder="adventurer01" value={u} onChange={e => setU(e.target.value)} disabled={busy} />
+      </div>
+      <div className="login-field">
+        <label htmlFor="lp-pass">รหัสผ่าน</label>
+        <input id="lp-pass" type="password" autoComplete={tab === 'login' ? 'current-password' : 'new-password'} placeholder="••••••••" value={p} onChange={e => setP(e.target.value)} disabled={busy} />
+      </div>
+      {err && <div className="login-error">{err}</div>}
+      <button type="submit" className="btn btn-primary login-submit" disabled={busy}>
+        {busy ? 'กำลังเข้าสู่ระบบ…' : (tab === 'login' ? 'เข้าสู่ระบบ' : 'สร้างบัญชี')}
+      </button>
+      <div className="login-foot">
+        <span>{tab === 'login' ? 'ยังไม่มีบัญชี?' : 'มีบัญชีอยู่แล้ว?'}</span>
+        <a onClick={() => { setTab(tab === 'login' ? 'register' : 'login'); setErr(null) }}>
+          {tab === 'login' ? 'สมัครสมาชิก →' : '← เข้าสู่ระบบ'}
+        </a>
+      </div>
+    </form>
   )
 }
 

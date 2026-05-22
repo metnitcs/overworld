@@ -8,11 +8,19 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+enum Role {
+  USER
+  ADMIN
+}
+
 model User {
   id         String      @id @default(cuid())
   username   String      @unique
   password   String // bcrypt hash
   email      String?     @unique
+  /// Slice 20: role-based gating for /api/admin/*. Bootstrapped via the
+  /// ADMIN_USERS env (comma-separated usernames) at register/login time.
+  role       Role        @default(USER)
   createdAt  DateTime    @default(now())
   characters Character[]
 }
@@ -30,9 +38,20 @@ model Character {
   maxHp       Int
   mp          Int
   maxMp       Int
+  // Slice 23: derived combat stats — cached from primary stats by deriveStats.
+  // Kept in DB so legacy reads + admin queries still see the final number.
   atk         Int
   def         Int
   spd         Int
+  /// Slice 23: 6 primary stats. Players allocate via [+] on Status modal;
+  /// every level grants STAT_POINTS_PER_LEVEL (5) extra unspent points.
+  str         Int             @default(10)
+  int         Int             @default(10)
+  dex         Int             @default(10)
+  agi         Int             @default(10)
+  luk         Int             @default(10)
+  vit         Int             @default(10)
+  unspentPoints Int           @default(0)
   gold        Int             @default(100)
   mapId       String          @default("village")
   px          Int             @default(5)
@@ -41,6 +60,9 @@ model Character {
   equipWeapon String?
   equipArmor  String?
   plus        Json // { "sword-1_w": 5, ... }
+  /// Slice 17: true after the Lv 10 race-change quest has resolved. Gates
+  /// the RaceChangeModal so it fires exactly once.
+  transcended Boolean         @default(false)
   inventory   InventoryItem[]
   battleLogs  BattleLog[]
   updatedAt   DateTime        @updatedAt
@@ -70,4 +92,179 @@ model BattleLog {
   createdAt    DateTime  @default(now())
 
   @@index([characterId])
+}
+
+// ─── Content tables (ADR 0002: DB-authoritative, seeded from shared/src/data.ts) ───
+
+enum ItemType {
+  mat
+  consume
+  weapon
+  armor
+}
+
+enum Rarity {
+  common
+  rare
+  epic
+  legendary
+}
+
+model Item {
+  id           String        @id // 'sword-1', 'potion-s', etc.
+  name         String
+  emoji        String
+  type         ItemType
+  rarity       Rarity        @default(common)
+  // Stat fields — null when the type doesn't carry that stat.
+  atk          Int?
+  def          Int?
+  matk         Int?
+  heal         Int?
+  healMp       Int?
+  desc         String
+  monsterDrops MonsterDrop[]
+  shopItems    ShopItem[]
+  recipe       Recipe?       @relation("RecipeResult")
+  recipeMats   RecipeMat[]
+}
+
+enum MonsterRank {
+  normal
+  elite
+  boss
+}
+
+model Monster {
+  id        String        @id // 'wolf-shadow', 'demon-lord', etc.
+  name      String
+  emoji     String
+  rank      MonsterRank   @default(normal)
+  lv        Int
+  hp        Int
+  atk       Int
+  def       Int
+  spd       Int
+  exp       Int
+  gold      Int
+  drops     MonsterDrop[]
+  mapSpawns MapMonster[]
+}
+
+model Map {
+  id           String       @id // 'village', 'sakura', etc.
+  name         String
+  minLv        Int
+  maxLv        Int
+  w            Int
+  h            Int
+  bg           String
+  /// Slice 21: optional path to a background image (relative to client public/,
+  /// e.g. '/assets/maps/forest.png'). When set, MapScene draws it instead of
+  /// the `bg` color carpet. Falls back to `bg` when missing.
+  bgImage      String?
+  pathColor    String?
+  monsterCount Int          @default(0)
+  /// 2D grid of tiles: { glyph?: string; walkable: boolean; kind?: TileKind }[][].
+  /// Shape validated client-side; future slice 15 may add server-side Zod.
+  layout       Json
+  monsters     MapMonster[]
+  warpsFrom    Warp[]       @relation("WarpFrom")
+  warpsTo      Warp[]       @relation("WarpTo")
+  npcs         Npc[]
+}
+
+enum NpcKind {
+  shop
+  healer
+  quest
+}
+
+model Npc {
+  id        String     @id // 'village-shopkeeper', 'village-healer'
+  name      String
+  emoji     String?
+  mapId     String
+  map       Map        @relation(fields: [mapId], references: [id], onDelete: Cascade)
+  x         Int
+  y         Int
+  kind      NpcKind
+  shopItems ShopItem[]
+
+  @@unique([mapId, x, y])
+  @@index([mapId])
+}
+
+model ShopItem {
+  npcId  String
+  npc    Npc    @relation(fields: [npcId], references: [id], onDelete: Cascade)
+  itemId String
+  item   Item   @relation(fields: [itemId], references: [id], onDelete: Restrict)
+  price  Int
+
+  @@id([npcId, itemId])
+}
+
+/// One crafting recipe. `id` mirrors the result Item.id (1 recipe per output
+/// in slice 14 scope); future migration can split id and add a separate
+/// `resultItemId` column if multiple recipes per output are needed.
+model Recipe {
+  id       String      @id
+  result   Item        @relation("RecipeResult", fields: [id], references: [id], onDelete: Cascade)
+  gold     Int
+  /// `string[]` — class ids allowed to craft this; null = any class.
+  classReq Json?
+  mats     RecipeMat[]
+}
+
+model RecipeMat {
+  recipeId String
+  recipe   Recipe @relation(fields: [recipeId], references: [id], onDelete: Cascade)
+  itemId   String
+  item     Item   @relation(fields: [itemId], references: [id], onDelete: Restrict)
+  qty      Int
+
+  @@id([recipeId, itemId])
+}
+
+model Warp {
+  id      String  @id @default(cuid())
+  mapId   String
+  fromMap Map     @relation("WarpFrom", fields: [mapId], references: [id], onDelete: Cascade)
+  x       Int
+  y       Int
+  toMapId String
+  toMap   Map     @relation("WarpTo", fields: [toMapId], references: [id], onDelete: Restrict)
+  tx      Int
+  ty      Int
+  label   String?
+
+  @@unique([mapId, x, y])
+  @@index([mapId])
+}
+
+model MapMonster {
+  mapId       String
+  map         Map     @relation(fields: [mapId], references: [id], onDelete: Cascade)
+  monsterId   String
+  monster     Monster @relation(fields: [monsterId], references: [id], onDelete: Cascade)
+  /// Relative spawn weight when picking a Monster for a spawn cell.
+  spawnWeight Int     @default(1)
+
+  @@id([mapId, monsterId])
+  @@index([mapId])
+}
+
+model MonsterDrop {
+  id        String  @id @default(cuid())
+  monsterId String
+  monster   Monster @relation(fields: [monsterId], references: [id], onDelete: Cascade)
+  itemId    String
+  item      Item    @relation(fields: [itemId], references: [id], onDelete: Restrict)
+  chance    Float // 0.0–1.0
+  minQty    Int     @default(1)
+  maxQty    Int     @default(1)
+
+  @@unique([monsterId, itemId])
+  @@index([monsterId])
 }

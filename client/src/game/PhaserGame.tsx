@@ -29,6 +29,9 @@ export function PhaserGame({ className }: Props) {
       scene: [MapScene],
       // Disable Phaser's built-in keyboard (we handle keys in App.tsx)
       input: { keyboard: false },
+      // pixelArt: true → nearest-neighbour scaling so the 16×16 Kenney
+      // sprites stay crisp when blown up to fit the 64px tile grid.
+      pixelArt: true,
       scale: {
         mode: Phaser.Scale.FIT,
         autoCenter: Phaser.Scale.CENTER_BOTH,

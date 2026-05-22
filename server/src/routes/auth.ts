@@ -13,6 +13,18 @@ const loginSchema = z.object({
   password: z.string(),
 })
 
+/** Resolve the role this user should have. ADMIN if the username (case-
+ *  insensitive) appears in `app.adminUsers`; otherwise keep `current`.
+ *  Pure for testability. */
+function resolveRole(
+  username: string,
+  current: 'USER' | 'ADMIN',
+  adminUsers: Set<string>,
+): 'USER' | 'ADMIN' {
+  if (adminUsers.has(username.toLowerCase())) return 'ADMIN'
+  return current
+}
+
 export function registerAuthRoutes(app: FastifyInstance): void {
   app.post('/api/auth/register', async (req, reply) => {
     const parsed = registerSchema.safeParse(req.body)
@@ -27,14 +39,15 @@ export function registerAuthRoutes(app: FastifyInstance): void {
     }
 
     const hashed = await hashPassword(password)
+    const role = resolveRole(username, 'USER', app.adminUsers)
     const user = await app.prisma.user.create({
-      data: { username, password: hashed, email },
+      data: { username, password: hashed, email, role },
     })
 
     const token = signToken({ userId: user.id }, app.jwtSecret)
     return reply.code(201).send({
       token,
-      user: { id: user.id, username: user.username },
+      user: { id: user.id, username: user.username, role: user.role },
     })
   })
 
@@ -46,15 +59,30 @@ export function registerAuthRoutes(app: FastifyInstance): void {
     const { username, password } = parsed.data
 
     const user = await app.prisma.user.findUnique({ where: { username } })
-    // Single 401 for both missing user and bad password — don't leak existence.
     if (!user || !(await verifyPassword(password, user.password))) {
       return reply.code(401).send({ error: 'invalid credentials' })
     }
 
-    const token = signToken({ userId: user.id }, app.jwtSecret)
+    // Auto-sync role from ADMIN_USERS env on every login. Cheap and lets you
+    // promote/demote without manual SQL.
+    const desired = resolveRole(user.username, user.role, app.adminUsers)
+    const synced = desired !== user.role
+      ? await app.prisma.user.update({ where: { id: user.id }, data: { role: desired } })
+      : user
+
+    const token = signToken({ userId: synced.id }, app.jwtSecret)
     return reply.send({
       token,
-      user: { id: user.id, username: user.username },
+      user: { id: synced.id, username: synced.username, role: synced.role },
     })
+  })
+
+  app.get('/api/me', { preHandler: app.requireAuth }, async (req, reply) => {
+    const user = await app.prisma.user.findUnique({
+      where: { id: req.userId },
+      select: { id: true, username: true, role: true },
+    })
+    if (!user) return reply.code(404).send({ error: 'user not found' })
+    return reply.send({ user })
   })
 }

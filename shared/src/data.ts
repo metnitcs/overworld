@@ -1,13 +1,46 @@
-import type { Race, CharClass, MapDef, ItemDef, Recipe } from './types.js'
+import type { Race, CharClass, MapDef, ItemDef, Recipe, TileDef, NpcDef } from './types.js'
 
+// Slice 17 race reform: starter = มนุษย์ (human). At Lv 10, character can
+// transcend into มาร or เทพ via the race-change quest (see RaceChangeModal).
+// The 4 races marked `available: false` are legacy — kept so older saves
+// don't break, never offered in any picker.
 export const RACES: Race[] = [
-  { id: 'mara',  name: 'เผ่ามาร',     emoji: '😈', hp: 110, mp: 80,  atk: 12, def: 8,  spd: 10, desc: 'พลังโจมตีและ HP สูง' },
-  { id: 'angel', name: 'เผ่านางฟ้า',   emoji: '👼', hp: 90,  mp: 120, atk: 10, def: 9,  spd: 11, desc: 'MP เยอะ ฟื้นฟูเก่ง' },
-  { id: 'beast', name: 'เผ่าสัตว์อสูร', emoji: '🐺', hp: 100, mp: 70,  atk: 11, def: 10, spd: 13, desc: 'รวดเร็ว ป้องกันดี' },
-  { id: 'god',   name: 'เผ่าเทพ',      emoji: '👑', hp: 95,  mp: 100, atk: 13, def: 8,  spd: 9,  desc: 'พลังเวทย์รุนแรง' },
-  { id: 'yaksa', name: 'เผ่ายักษ์',    emoji: '👺', hp: 130, mp: 60,  atk: 14, def: 12, spd: 7,  desc: 'อึดสุด พลังถึก' },
-  { id: 'phaya', name: 'เผ่าพญามาร',  emoji: '🦹', hp: 105, mp: 90,  atk: 13, def: 9,  spd: 11, desc: 'สมดุลระดับสูง' },
+  { id: 'human', name: 'เผ่ามนุษย์', emoji: '🧑', hp: 100, mp: 80,  atk: 11, def: 9,  spd: 10, desc: 'สมดุลทุกด้าน — เผ่าเริ่มต้นของผู้กล้า',           available: true, starter: true },
+  { id: 'mara',  name: 'เผ่ามาร',     emoji: '😈', hp: 110, mp: 80,  atk: 12, def: 8,  spd: 10, desc: 'พลังโจมตีและ HP สูง — สายลุย',                    available: true },
+  { id: 'god',   name: 'เผ่าเทพ',     emoji: '👑', hp: 95,  mp: 100, atk: 13, def: 8,  spd: 9,  desc: 'พลังเวทย์รุนแรง MP เยอะ — สายเวท',                available: true },
+  // ─── deprecated (kept for backward compatibility with old saves) ────
+  { id: 'angel', name: 'เผ่านางฟ้า',   emoji: '👼', hp: 90,  mp: 120, atk: 10, def: 9,  spd: 11, desc: 'MP เยอะ ฟื้นฟูเก่ง',     available: false },
+  { id: 'beast', name: 'เผ่าสัตว์อสูร', emoji: '🐺', hp: 100, mp: 70,  atk: 11, def: 10, spd: 13, desc: 'รวดเร็ว ป้องกันดี',     available: false },
+  { id: 'yaksa', name: 'เผ่ายักษ์',    emoji: '👺', hp: 130, mp: 60,  atk: 14, def: 12, spd: 7,  desc: 'อึดสุด พลังถึก',         available: false },
+  { id: 'phaya', name: 'เผ่าพญามาร',  emoji: '🦹', hp: 105, mp: 90,  atk: 13, def: 9,  spd: 11, desc: 'สมดุลระดับสูง',          available: false },
 ]
+
+/** Helper for UI: race-change modal + character-create flow show only these. */
+export const AVAILABLE_RACES: Race[] = RACES.filter((r) => r.available)
+/** The starter race assigned at character creation (Slice 17). */
+export const STARTER_RACE = RACES.find((r) => r.starter)!
+
+/** Lv at which the race-change quest unlocks. */
+export const TRANSCEND_LV = 10
+/** Max characters per account before the slot-expansion item ships. */
+export const CHARACTER_SLOT_LIMIT = 3
+
+// ─── Slice 23: Primary-stat tuning constants ─────────────────────────────
+// All gameplay numbers live here as `export const` so admin tuning + future
+// content slices have a single source of truth. Race/class redesign (next
+// slice) will replace the legacy `Race.hp/atk/...` with stat MODIFIERS that
+// add into the primary pool.
+export const STAT_POINTS_PER_LEVEL = 5
+/** Every new character starts with this in each primary stat (10×6 = 60). */
+export const STAT_BASE = 10
+/** Soft cap shown in UI; player can still allocate above this (end-game). */
+export const STAT_SOFT_CAP = 99
+/** Hard cap — server rejects allocations beyond this. */
+export const STAT_HARD_CAP = 200
+/** Flat HP floor, before VIT and Lv add in. */
+export const BASE_HP = 50
+/** Flat MP floor, before INT and Lv add in. */
+export const BASE_MP = 20
 
 export const CLASSES: CharClass[] = [
   { id: 'berserk',    name: 'นักดาบเดือด',          emoji: '⚔️', atk: 6, def: 2, spd: 1, mp: 0,  skill: { name: 'ฟันสายฟ้า',     mp: 10, mult: 2.0, type: 'phys' } },
@@ -20,39 +53,39 @@ export const CLASSES: CharClass[] = [
 
 export const ITEMS: Record<string, ItemDef> = {
   // Materials
-  'silk':         { name: 'ไหมดักแด้',     emoji: '🧵', type: 'mat', desc: 'วัตถุดิบเย็บผ้า' },
-  'pollen':       { name: 'เกสรพิษ',       emoji: '🌼', type: 'mat', desc: 'วัตถุดิบเวทย์' },
-  'fang':         { name: 'เขี้ยวหมาป่า',   emoji: '🦷', type: 'mat', desc: 'แข็งและคม' },
-  'scale':        { name: 'เกล็ดงู',        emoji: '🐍', type: 'mat', desc: 'เหนียวทนทาน' },
-  'mushroom':     { name: 'เห็ดอาถรรพ์',   emoji: '🍄', type: 'mat', desc: 'มีพลังเวทย์' },
-  'magma':        { name: 'หินลาวา',       emoji: '🪨', type: 'mat', desc: 'ร้อนระอุ' },
-  'dragon-scale': { name: 'เกล็ดมังกร',    emoji: '🔶', type: 'mat', desc: 'แข็งดั่งเพชร' },
-  'soul':         { name: 'ดวงวิญญาณ',    emoji: '👻', type: 'mat', desc: 'พลังเร้นลับ' },
-  'demon-horn':   { name: 'เขาปีศาจ',      emoji: '🦴', type: 'mat', desc: 'พลังมืด' },
-  'soul-gem':     { name: 'อัญมณีวิญญาณ',  emoji: '💎', type: 'mat', desc: 'หายากสุดๆ' },
-  'crown':        { name: 'มงกุฎมาร',      emoji: '👑', type: 'mat', desc: 'พลังจอมมาร' },
-  'plus-stone':   { name: 'หินตีบวก',      emoji: '💠', type: 'mat', desc: 'เพิ่มพลังอาวุธ' },
+  'silk':         { name: 'ไหมดักแด้',     emoji: '🧵', type: 'mat', rarity: 'common',    desc: 'วัตถุดิบเย็บผ้า' },
+  'pollen':       { name: 'เกสรพิษ',       emoji: '🌼', type: 'mat', rarity: 'common',    desc: 'วัตถุดิบเวทย์' },
+  'fang':         { name: 'เขี้ยวหมาป่า',   emoji: '🦷', type: 'mat', rarity: 'common',    desc: 'แข็งและคม' },
+  'scale':        { name: 'เกล็ดงู',        emoji: '🐍', type: 'mat', rarity: 'common',    desc: 'เหนียวทนทาน' },
+  'mushroom':     { name: 'เห็ดอาถรรพ์',   emoji: '🍄', type: 'mat', rarity: 'common',    desc: 'มีพลังเวทย์' },
+  'magma':        { name: 'หินลาวา',       emoji: '🪨', type: 'mat', rarity: 'rare',      desc: 'ร้อนระอุ' },
+  'dragon-scale': { name: 'เกล็ดมังกร',    emoji: '🔶', type: 'mat', rarity: 'rare',      desc: 'แข็งดั่งเพชร' },
+  'soul':         { name: 'ดวงวิญญาณ',    emoji: '👻', type: 'mat', rarity: 'rare',      desc: 'พลังเร้นลับ' },
+  'demon-horn':   { name: 'เขาปีศาจ',      emoji: '🦴', type: 'mat', rarity: 'epic',      desc: 'พลังมืด' },
+  'soul-gem':     { name: 'อัญมณีวิญญาณ',  emoji: '💎', type: 'mat', rarity: 'legendary', desc: 'หายากสุดๆ' },
+  'crown':        { name: 'มงกุฎมาร',      emoji: '👑', type: 'mat', rarity: 'legendary', desc: 'พลังจอมมาร' },
+  'plus-stone':   { name: 'หินตีบวก',      emoji: '💠', type: 'mat', rarity: 'rare',      desc: 'เพิ่มพลังอาวุธ' },
   // Consumables
-  'potion-s': { name: 'ยาฟื้น HP เล็ก',  emoji: '🧪', type: 'consume', heal: 50,  desc: 'ฟื้น HP 50' },
-  'potion-m': { name: 'ยาฟื้น HP กลาง', emoji: '🍶', type: 'consume', heal: 150, desc: 'ฟื้น HP 150' },
-  'potion-l': { name: 'ยาฟื้น HP ใหญ่', emoji: '🏺', type: 'consume', heal: 400, desc: 'ฟื้น HP 400' },
-  'ether-s':  { name: 'น้ำมนตร์เล็ก',    emoji: '💧', type: 'consume', healMp: 30, desc: 'ฟื้น MP 30' },
+  'potion-s': { name: 'ยาฟื้น HP เล็ก',  emoji: '🧪', type: 'consume', rarity: 'common', heal: 50,  desc: 'ฟื้น HP 50' },
+  'potion-m': { name: 'ยาฟื้น HP กลาง', emoji: '🍶', type: 'consume', rarity: 'rare',   heal: 150, desc: 'ฟื้น HP 150' },
+  'potion-l': { name: 'ยาฟื้น HP ใหญ่', emoji: '🏺', type: 'consume', rarity: 'epic',   heal: 400, desc: 'ฟื้น HP 400' },
+  'ether-s':  { name: 'น้ำมนตร์เล็ก',    emoji: '💧', type: 'consume', rarity: 'common', healMp: 30, desc: 'ฟื้น MP 30' },
   // Weapons
-  'sword-1': { name: 'ดาบไหม',         emoji: '🗡️', type: 'weapon', atk: 8,  desc: 'อาวุธพื้นฐาน' },
-  'sword-2': { name: 'ดาบเขี้ยว',       emoji: '⚔️', type: 'weapon', atk: 18, desc: 'อาวุธป่า' },
-  'sword-3': { name: 'ดาบลาวา',        emoji: '🔥', type: 'weapon', atk: 38, desc: 'อาวุธภูเขาไฟ' },
-  'sword-4': { name: 'ดาบจอมมาร',      emoji: '👿', type: 'weapon', atk: 80, desc: 'อาวุธในตำนาน' },
-  'gun-1':   { name: 'ปืนพก',          emoji: '🔫', type: 'weapon', atk: 7,  desc: 'อาวุธมือปืน' },
-  'gun-2':   { name: 'ปืนเขี้ยวงู',     emoji: '🐍', type: 'weapon', atk: 17, desc: 'อาวุธมือปืน' },
-  'gun-3':   { name: 'ปืนเพลิงมังกร',  emoji: '🐉', type: 'weapon', atk: 36, desc: 'อาวุธมือปืน' },
-  'staff-1': { name: 'ไม้เท้าซากุระ',   emoji: '🌸', type: 'weapon', atk: 6,  matk: 4,  desc: 'อาวุธชาแมน' },
-  'staff-2': { name: 'ไม้เท้าเห็ด',     emoji: '🍄', type: 'weapon', atk: 14, matk: 10, desc: 'อาวุธชาแมน' },
-  'staff-3': { name: 'ไม้เท้าวิญญาณ',  emoji: '👻', type: 'weapon', atk: 30, matk: 24, desc: 'อาวุธชาแมน' },
+  'sword-1': { name: 'ดาบไหม',         emoji: '🗡️', type: 'weapon', rarity: 'common',    atk: 8,  desc: 'อาวุธพื้นฐาน' },
+  'sword-2': { name: 'ดาบเขี้ยว',       emoji: '⚔️', type: 'weapon', rarity: 'rare',      atk: 18, desc: 'อาวุธป่า' },
+  'sword-3': { name: 'ดาบลาวา',        emoji: '🔥', type: 'weapon', rarity: 'epic',      atk: 38, desc: 'อาวุธภูเขาไฟ' },
+  'sword-4': { name: 'ดาบจอมมาร',      emoji: '👿', type: 'weapon', rarity: 'legendary', atk: 80, desc: 'อาวุธในตำนาน' },
+  'gun-1':   { name: 'ปืนพก',          emoji: '🔫', type: 'weapon', rarity: 'common',    atk: 7,  desc: 'อาวุธมือปืน' },
+  'gun-2':   { name: 'ปืนเขี้ยวงู',     emoji: '🐍', type: 'weapon', rarity: 'rare',      atk: 17, desc: 'อาวุธมือปืน' },
+  'gun-3':   { name: 'ปืนเพลิงมังกร',  emoji: '🐉', type: 'weapon', rarity: 'epic',      atk: 36, desc: 'อาวุธมือปืน' },
+  'staff-1': { name: 'ไม้เท้าซากุระ',   emoji: '🌸', type: 'weapon', rarity: 'common',    atk: 6,  matk: 4,  desc: 'อาวุธชาแมน' },
+  'staff-2': { name: 'ไม้เท้าเห็ด',     emoji: '🍄', type: 'weapon', rarity: 'rare',      atk: 14, matk: 10, desc: 'อาวุธชาแมน' },
+  'staff-3': { name: 'ไม้เท้าวิญญาณ',  emoji: '👻', type: 'weapon', rarity: 'epic',      atk: 30, matk: 24, desc: 'อาวุธชาแมน' },
   // Armor
-  'armor-1': { name: 'เกราะไหม',      emoji: '👕', type: 'armor', def: 5,  desc: 'เกราะพื้นฐาน' },
-  'armor-2': { name: 'เกราะเกล็ด',    emoji: '🦺', type: 'armor', def: 12, desc: 'เกราะป่า' },
-  'armor-3': { name: 'เกราะลาวา',    emoji: '🥋', type: 'armor', def: 26, desc: 'เกราะภูเขาไฟ' },
-  'armor-4': { name: 'เกราะมงกุฎมาร', emoji: '👘', type: 'armor', def: 55, desc: 'เกราะตำนาน' },
+  'armor-1': { name: 'เกราะไหม',      emoji: '👕', type: 'armor', rarity: 'common',    def: 5,  desc: 'เกราะพื้นฐาน' },
+  'armor-2': { name: 'เกราะเกล็ด',    emoji: '🦺', type: 'armor', rarity: 'rare',      def: 12, desc: 'เกราะป่า' },
+  'armor-3': { name: 'เกราะลาวา',    emoji: '🥋', type: 'armor', rarity: 'epic',      def: 26, desc: 'เกราะภูเขาไฟ' },
+  'armor-4': { name: 'เกราะมงกุฎมาร', emoji: '👘', type: 'armor', rarity: 'legendary', def: 55, desc: 'เกราะตำนาน' },
 }
 
 // Maps are connected via warps (run into a warp tile → teleport to another map)
@@ -74,9 +107,9 @@ export const MAPS: Record<string, MapDef> = {
     tiles: ['🌸', '🌿', '🌱'], bg: '#f8c8d8', pathColor: '#d4a4b8',
     w: 14, h: 10, monsterCount: 6,
     monsters: [
-      { name: 'ดักแด้น้อย', emoji: '🐛', lv: 1, hp: 25, atk: 5, def: 2, spd: 5, exp: 8,  gold: 5,  drop: { item: 'silk',   chance: 0.6 } },
-      { name: 'ผีเสื้อ',    emoji: '🦋', lv: 2, hp: 35, atk: 7, def: 3, spd: 8, exp: 12, gold: 7,  drop: { item: 'silk',   chance: 0.5 } },
-      { name: 'ดอกพิษ',    emoji: '🌺', lv: 3, hp: 50, atk: 9, def: 4, spd: 4, exp: 16, gold: 10, drop: { item: 'pollen', chance: 0.7 } },
+      { id: 'larva-small',    name: 'ดักแด้น้อย', emoji: '🐛', lv: 1, hp: 25, atk: 5, def: 2, spd: 5, exp: 8,  gold: 5,  drop: { item: 'silk',   chance: 0.6 } },
+      { id: 'butterfly',      name: 'ผีเสื้อ',    emoji: '🦋', lv: 2, hp: 35, atk: 7, def: 3, spd: 8, exp: 12, gold: 7,  drop: { item: 'silk',   chance: 0.5 } },
+      { id: 'poison-flower',  name: 'ดอกพิษ',    emoji: '🌺', lv: 3, hp: 50, atk: 9, def: 4, spd: 4, exp: 16, gold: 10, drop: { item: 'pollen', chance: 0.7 } },
     ],
     warps: [
       { x: 0, y: 5, to: 'village', tx: 10, ty: 5, label: '← หมู่บ้าน' },
@@ -88,13 +121,24 @@ export const MAPS: Record<string, MapDef> = {
     tiles: ['🌲', '🌳', '🍄'], bg: '#7fb070', pathColor: '#8a6a4a',
     w: 14, h: 11, monsterCount: 7,
     monsters: [
-      { name: 'หมาป่าเงา',   emoji: '🐺', lv: 6,  hp: 85,  atk: 14, def: 6,  spd: 11, exp: 30, gold: 18, drop: { item: 'fang',     chance: 0.5 } },
-      { name: 'งูยักษ์',      emoji: '🐍', lv: 8,  hp: 110, atk: 18, def: 7,  spd: 9,  exp: 42, gold: 24, drop: { item: 'scale',    chance: 0.55 } },
-      { name: 'เห็ดอาถรรพ์', emoji: '🍄', lv: 10, hp: 140, atk: 20, def: 10, spd: 6,  exp: 60, gold: 35, drop: { item: 'mushroom', chance: 0.6 } },
+      { id: 'wolf-shadow',     name: 'หมาป่าเงา',   emoji: '🐺', lv: 6,  hp: 85,  atk: 14, def: 6,  spd: 11, exp: 30, gold: 18, drop: { item: 'fang',     chance: 0.5 } },
+      { id: 'snake-giant',     name: 'งูยักษ์',      emoji: '🐍', lv: 8,  hp: 110, atk: 18, def: 7,  spd: 9,  exp: 42, gold: 24, drop: { item: 'scale',    chance: 0.55 } },
+      { id: 'mushroom-mystic', name: 'เห็ดอาถรรพ์', emoji: '🍄', lv: 10, hp: 140, atk: 20, def: 10, spd: 6,  exp: 60, gold: 35, drop: { item: 'mushroom', chance: 0.6 } },
     ],
     warps: [
       { x: 0, y: 5, to: 'sakura', tx: 12, ty: 5, label: '← ทุ่งซากุระ' },
       { x: 13, y: 5, to: 'volcano', tx: 0, ty: 5, label: '→ ภูเขาไฟ' },
+    ],
+    // Slice 11 smoke test: 6 tree walls flanking the central east-west path
+    // so the player has to weave around them. None of these block the path
+    // tiles (y=5) or the warps at (0,5)/(13,5).
+    walls: [
+      { x: 3,  y: 3, glyph: '🌳' },
+      { x: 3,  y: 7, glyph: '🌳' },
+      { x: 7,  y: 2, glyph: '🌳' },
+      { x: 7,  y: 8, glyph: '🌳' },
+      { x: 10, y: 4, glyph: '🌳' },
+      { x: 10, y: 6, glyph: '🌳' },
     ],
   },
   volcano: {
@@ -102,9 +146,9 @@ export const MAPS: Record<string, MapDef> = {
     tiles: ['🌋', '🔥', '🪨'], bg: '#d57a4a', pathColor: '#6a2a1a',
     w: 14, h: 11, monsterCount: 7,
     monsters: [
-      { name: 'อสูรลาวา',    emoji: '👹', lv: 14, hp: 220, atk: 28, def: 14, spd: 10, exp: 110, gold: 60,  drop: { item: 'magma',        chance: 0.5 } },
-      { name: 'มังกรไฟน้อย', emoji: '🐉', lv: 18, hp: 320, atk: 38, def: 18, spd: 12, exp: 180, gold: 90,  drop: { item: 'dragon-scale', chance: 0.4 } },
-      { name: 'ผีไฟ',        emoji: '👻', lv: 20, hp: 280, atk: 42, def: 12, spd: 16, exp: 220, gold: 120, drop: { item: 'soul',         chance: 0.5 } },
+      { id: 'demon-lava',       name: 'อสูรลาวา',    emoji: '👹', lv: 14, hp: 220, atk: 28, def: 14, spd: 10, exp: 110, gold: 60,  drop: { item: 'magma',        chance: 0.5 } },
+      { id: 'dragon-fire-small', name: 'มังกรไฟน้อย', emoji: '🐉', lv: 18, hp: 320, atk: 38, def: 18, spd: 12, exp: 180, gold: 90,  drop: { item: 'dragon-scale', chance: 0.4 } },
+      { id: 'ghost-fire',       name: 'ผีไฟ',        emoji: '👻', lv: 20, hp: 280, atk: 42, def: 12, spd: 16, exp: 220, gold: 120, drop: { item: 'soul',         chance: 0.5 } },
     ],
     warps: [
       { x: 0, y: 5, to: 'forest', tx: 12, ty: 5, label: '← ป่า' },
@@ -116,9 +160,15 @@ export const MAPS: Record<string, MapDef> = {
     tiles: ['🔥', '💀', '🩸'], bg: '#7a3050', pathColor: '#3a0e1a',
     w: 14, h: 11, monsterCount: 7,
     monsters: [
-      { name: 'ปีศาจครึ่งดวงจันทร์', emoji: '🦇', lv: 28, hp: 480,  atk: 60,  def: 24, spd: 18, exp: 360, gold: 200, drop: { item: 'demon-horn', chance: 0.45 } },
-      { name: 'พญายมราช',          emoji: '☠️', lv: 35, hp: 720,  atk: 82,  def: 32, spd: 20, exp: 560, gold: 320, drop: { item: 'soul-gem',  chance: 0.3 } },
-      { name: 'จอมมาร',            emoji: '😈', lv: 45, hp: 1100, atk: 110, def: 44, spd: 22, exp: 900, gold: 600, drop: { item: 'crown',     chance: 0.2 } },
+      { id: 'demon-half-moon', name: 'ปีศาจครึ่งดวงจันทร์', emoji: '🦇', lv: 28, hp: 480,  atk: 60,  def: 24, spd: 18, exp: 360, gold: 200, drop: { item: 'demon-horn', chance: 0.45 } },
+      // พญายมราช: elite tier — rarer encounter, signature drop is soul-gem (legendary).
+      { id: 'death-lord',      name: 'พญายมราช',          emoji: '☠️', lv: 35, hp: 720,  atk: 82,  def: 32, spd: 20, exp: 560, gold: 320, rank: 'elite', drop: { item: 'soul-gem',  chance: 0.3 } },
+      // จอมมาร: boss — slice 11 will gate its spawn behind tile.kind='boss-spawn'.
+      { id: 'demon-lord',      name: 'จอมมาร',            emoji: '😈', lv: 45, hp: 1100, atk: 110, def: 44, spd: 22, exp: 900, gold: 600, rank: 'boss',  drops: [
+        { item: 'crown',    chance: 0.5, minQty: 1, maxQty: 1 },
+        { item: 'soul-gem', chance: 0.8, minQty: 1, maxQty: 2 },
+        { item: 'demon-horn', chance: 1.0, minQty: 2, maxQty: 4 },
+      ] },
     ],
     warps: [
       { x: 0, y: 5, to: 'volcano', tx: 12, ty: 5, label: '← ภูเขาไฟ' },
@@ -145,4 +195,72 @@ export const RECIPES: Recipe[] = [
 
 export function expForLv(lv: number): number {
   return 20 + Math.floor(Math.pow(lv, 2.2) * 5)
+}
+
+/** Fixed gold cost for a Healer NPC's full HP/MP restore. Single source of
+ *  truth — modal UI and any future server-authoritative heal handler both
+ *  read from here. */
+export const HEAL_FULL_COST = 50
+
+export const NPCS: Record<string, NpcDef> = {
+  'village-shopkeeper': {
+    id: 'village-shopkeeper',
+    name: 'แม่ค้าประจำหมู่บ้าน',
+    emoji: '🧙‍♀️',
+    mapId: 'village',
+    x: 3, y: 3,
+    kind: 'shop',
+    shop: [
+      { item: 'potion-s',   price: 30 },
+      { item: 'potion-m',   price: 100 },
+      { item: 'potion-l',   price: 300 },
+      { item: 'ether-s',    price: 50 },
+      { item: 'plus-stone', price: 250 },
+    ],
+  },
+  'village-healer': {
+    id: 'village-healer',
+    name: 'หมอประจำหมู่บ้าน',
+    emoji: '👩‍⚕️',
+    mapId: 'village',
+    x: 8, y: 3,
+    kind: 'healer',
+  },
+}
+
+/** Generate a deterministic decorative Layout from a Map's tile palette.
+ *  Produces the same scattered-glyph pattern the legacy MapScene drew
+ *  procedurally — pinning it to JSON so it survives the move to DB.
+ *
+ *  Slice 10: every cell `walkable: true`, no `kind` set.
+ *  Slice 11: optional `walls` parameter stamps walkable=false cells. */
+export function makeLayout(map: Pick<MapDef, 'id' | 'w' | 'h' | 'tiles' | 'walls'>): TileDef[][] {
+  const rows: TileDef[][] = []
+  const idHash = map.id.length * 3
+  for (let y = 0; y < map.h; y++) {
+    const row: TileDef[] = []
+    for (let x = 0; x < map.w; x++) {
+      const h = (x * 7 + y * 13 + idHash) % 19
+      const cell: TileDef = { walkable: true }
+      // ~26% of cells get a decorative glyph; suppress the two strongest
+      // glyphs on the centre horizontal path so it stays visually clear.
+      if (h < 5) {
+        const isPath = y === Math.floor(map.h / 2)
+        if (!(isPath && h < 2)) {
+          cell.glyph = map.tiles[h % map.tiles.length]
+        }
+      }
+      row.push(cell)
+    }
+    rows.push(row)
+  }
+  // Stamp walls after the base layout — wall glyph overrides any decorative one.
+  for (const w of map.walls ?? []) {
+    if (w.y < 0 || w.y >= map.h || w.x < 0 || w.x >= map.w) continue
+    rows[w.y][w.x] = {
+      walkable: false,
+      glyph: w.glyph ?? rows[w.y][w.x].glyph,
+    }
+  }
+  return rows
 }

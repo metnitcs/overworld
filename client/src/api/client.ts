@@ -1,7 +1,20 @@
-import type { GameState } from '@asura/shared'
+import type {
+  GameState, ItemDef, MonsterDef, TileDef, WarpDef, NpcKind, ShopEntry, Recipe,
+} from '@asura/shared'
 
 // Vite exposes VITE_* env vars at build time (see client/.env.example).
 const API_URL = (import.meta.env.VITE_API_URL as string | undefined) ?? 'http://localhost:3000'
+
+/** Public API origin — used to absolute-resolve admin-uploaded paths like
+ *  `/uploads/maps/foo.png` so they load from the server, not the Vite dev
+ *  server. Static `/assets/...` paths (committed to client/public) are NOT
+ *  prefixed — they're served by Vite itself. */
+export function resolveAssetUrl(url: string | null | undefined): string | null {
+  if (!url) return null
+  if (/^https?:\/\//i.test(url)) return url
+  if (url.startsWith('/uploads/')) return `${API_URL}${url}`
+  return url
+}
 
 export class ApiError extends Error {
   constructor(public status: number, public body: unknown) {
@@ -16,12 +29,16 @@ interface RequestOptions {
 }
 
 async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
+  // Only set Content-Type when we have a body — Fastify rejects requests that
+  // declare JSON content-type with an empty body (FST_ERR_CTP_EMPTY_JSON_BODY).
+  // This matters for POST/DELETE calls with no payload (admin cache reload,
+  // delete endpoints).
+  const headers: Record<string, string> = {}
+  if (opts.token) headers.Authorization = `Bearer ${opts.token}`
+  if (opts.body !== undefined) headers['Content-Type'] = 'application/json'
   const res = await fetch(`${API_URL}${path}`, {
     method: opts.method ?? 'GET',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(opts.token ? { Authorization: `Bearer ${opts.token}` } : {}),
-    },
+    headers,
     body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
   })
   const json: unknown = await res.json().catch(() => null)
@@ -31,11 +48,211 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
 
 export interface AuthResponse {
   token: string
-  user: { id: string; username: string }
+  user: { id: string; username: string; role?: 'USER' | 'ADMIN' }
+}
+
+export interface MeResponse {
+  user: { id: string; username: string; role: 'USER' | 'ADMIN' }
+}
+
+// ─── Admin-facing wire shapes ───────────────────────────────────────────────
+
+export type AdminItemType = 'mat' | 'consume' | 'weapon' | 'armor'
+export type AdminRarity = 'common' | 'rare' | 'epic' | 'legendary'
+export type AdminMonsterRank = 'normal' | 'elite' | 'boss'
+
+export interface AdminItemRow {
+  id: string
+  name: string
+  emoji: string
+  type: AdminItemType
+  rarity: AdminRarity
+  atk: number | null
+  def: number | null
+  matk: number | null
+  heal: number | null
+  healMp: number | null
+  desc: string
+}
+
+export interface AdminItemBody {
+  name: string
+  emoji: string
+  type: AdminItemType
+  rarity?: AdminRarity
+  atk?: number | null
+  def?: number | null
+  matk?: number | null
+  heal?: number | null
+  healMp?: number | null
+  desc: string
+}
+
+export interface AdminDropEntry {
+  item: string
+  chance: number
+  minQty: number
+  maxQty: number
+}
+
+export interface AdminMonsterRow {
+  id: string
+  name: string
+  emoji: string
+  rank: AdminMonsterRank
+  lv: number
+  hp: number
+  atk: number
+  def: number
+  spd: number
+  exp: number
+  gold: number
+  drops: Array<{
+    itemId: string
+    chance: number
+    minQty: number
+    maxQty: number
+  }>
+}
+
+export interface AdminMonsterBody {
+  name: string
+  emoji: string
+  rank?: AdminMonsterRank
+  lv: number
+  hp: number
+  atk: number
+  def: number
+  spd: number
+  exp: number
+  gold: number
+  drops: AdminDropEntry[]
+}
+
+export interface AdminTile {
+  glyph?: string
+  walkable: boolean
+  kind?: 'shop' | 'healer' | 'quest' | 'warp'
+}
+
+export interface AdminMapMonsterEntry {
+  monsterId: string
+  spawnWeight: number
+}
+
+export interface AdminWarpEntry {
+  x: number
+  y: number
+  toMapId: string
+  tx: number
+  ty: number
+  label?: string | null
+}
+
+export interface AdminMapRow {
+  id: string
+  name: string
+  minLv: number
+  maxLv: number
+  w: number
+  h: number
+  bg: string
+  bgImage: string | null
+  pathColor: string | null
+  monsterCount: number
+  layout: AdminTile[][]
+  monsters: AdminMapMonsterEntry[]
+  warps: AdminWarpEntry[]
+}
+
+export interface AdminMapBody {
+  name: string
+  minLv: number
+  maxLv: number
+  w: number
+  h: number
+  bg: string
+  bgImage?: string | null
+  pathColor?: string | null
+  monsterCount: number
+  layout: AdminTile[][]
+  monsters: AdminMapMonsterEntry[]
+  warps: AdminWarpEntry[]
+}
+
+export interface AdminCharacterRow {
+  id: string
+  username: string
+  name: string
+  raceId: string
+  classId: string
+  lv: number
+  exp: number
+  gold: number
+  mapId: string
+  transcended: boolean
+}
+
+export interface AdminCharacterPatch {
+  lv?: number
+  exp?: number
+  gold?: number
+  hp?: number
+  maxHp?: number
+  mp?: number
+  maxMp?: number
+  atk?: number
+  def?: number
+  spd?: number
+  mapId?: string
 }
 
 export interface CharacterResponse {
   character: GameState & { id: string }
+}
+
+export interface CharactersListResponse {
+  characters: Array<GameState & { id: string }>
+  slotLimit: number
+}
+
+/** NPC entry on the wire, with shop stock inlined when applicable. */
+export interface NpcResponse {
+  id: string
+  name: string
+  emoji: string | null
+  x: number
+  y: number
+  kind: NpcKind
+  shop: ShopEntry[]
+}
+
+/** Map entry on the wire — embeds the spawn-monster id list, outgoing Warps,
+ *  and NPCs inline so the client only round-trips once per session. */
+export interface MapResponse {
+  id: string
+  name: string
+  minLv: number
+  maxLv: number
+  w: number
+  h: number
+  bg: string
+  /** Slice 21: optional background image path. */
+  bgImage: string | null
+  pathColor: string | null
+  monsterCount: number
+  layout: TileDef[][]
+  monsters: string[]
+  warps: WarpDef[]
+  npcs: NpcResponse[]
+}
+
+/** Shape of GET /api/content — the Zustand content cache mirrors this 1:1. */
+export interface ContentResponse {
+  items: Record<string, ItemDef>
+  monsters: Record<string, MonsterDef>
+  maps: Record<string, MapResponse>
+  recipes: Recipe[]
 }
 
 /** Fields persisted via PUT — the GameState fields that are mutable in-game
@@ -49,12 +266,101 @@ export const api = {
   login: (username: string, password: string) =>
     request<AuthResponse>('/api/auth/login', { method: 'POST', body: { username, password } }),
 
+  // ─── Multi-character (Slice 16) ───
+  listCharacters: (token: string) =>
+    request<CharactersListResponse>('/api/characters', { token }),
+
+  getCharacterById: (token: string, id: string) =>
+    request<CharacterResponse>(`/api/character/${id}`, { token }),
+
+  saveCharacterById: (token: string, id: string, body: SaveBody) =>
+    request<CharacterResponse>(`/api/character/${id}`, { method: 'PUT', token, body }),
+
+  deleteCharacter: (token: string, id: string) =>
+    request<{ ok: true }>(`/api/character/${id}`, { method: 'DELETE', token }),
+
+  /** Slice 17 race change at Lv 10. Server validates lv + AVAILABLE_RACES. */
+  transcendCharacter: (token: string, id: string, raceId: string) =>
+    request<CharacterResponse>(`/api/character/${id}/transcend`, {
+      method: 'POST', token, body: { raceId },
+    }),
+
+  /** Slice 23 — spend stat points on one primary stat. */
+  allocateStat: (token: string, id: string, stat: string, amount: number) =>
+    request<CharacterResponse>(`/api/character/${id}/allocate`, {
+      method: 'POST', token, body: { stat, amount },
+    }),
+
+  /** Slice 23 — reset all primary stats back to 10, refund every spent point. */
+  resetCharacterStats: (token: string, id: string) =>
+    request<CharacterResponse>(`/api/character/${id}/reset-stats`, {
+      method: 'POST', token,
+    }),
+
+  // ─── Legacy first-char endpoints (kept until full removal) ───
   getCharacter: (token: string) =>
     request<CharacterResponse>('/api/character', { token }),
 
-  createCharacter: (token: string, body: { name: string; raceId: string; classId: string }) =>
+  /** raceId is ignored server-side now (starter race always assigned).
+   *  Kept in the type for backward compat with any caller that still passes it. */
+  createCharacter: (token: string, body: { name: string; classId: string; raceId?: string }) =>
     request<CharacterResponse>('/api/character', { method: 'POST', token, body }),
 
   saveCharacter: (token: string, body: SaveBody) =>
     request<CharacterResponse>('/api/character', { method: 'PUT', token, body }),
+
+  getContent: () => request<ContentResponse>('/api/content'),
+
+  // ─── Slice 20: identity + admin panel ───
+  me: (token: string) => request<MeResponse>('/api/me', { token }),
+
+  adminListItems: (token: string) =>
+    request<{ items: AdminItemRow[] }>('/api/admin/items', { token }),
+  adminCreateItem: (token: string, body: AdminItemBody & { id: string }) =>
+    request<{ item: AdminItemRow }>('/api/admin/items', { method: 'POST', token, body }),
+  adminUpdateItem: (token: string, id: string, body: AdminItemBody) =>
+    request<{ item: AdminItemRow }>(`/api/admin/items/${id}`, { method: 'PUT', token, body }),
+  adminDeleteItem: (token: string, id: string) =>
+    request<{ ok: true }>(`/api/admin/items/${id}`, { method: 'DELETE', token }),
+
+  adminListMaps: (token: string) =>
+    request<{ maps: AdminMapRow[] }>('/api/admin/maps', { token }),
+  adminCreateMap: (token: string, body: AdminMapBody & { id: string }) =>
+    request<{ map: AdminMapRow }>('/api/admin/maps', { method: 'POST', token, body }),
+  adminUpdateMap: (token: string, id: string, body: AdminMapBody) =>
+    request<{ map: AdminMapRow }>(`/api/admin/maps/${id}`, { method: 'PUT', token, body }),
+  adminDeleteMap: (token: string, id: string) =>
+    request<{ ok: true }>(`/api/admin/maps/${id}`, { method: 'DELETE', token }),
+
+  adminListMonsters: (token: string) =>
+    request<{ monsters: AdminMonsterRow[] }>('/api/admin/monsters', { token }),
+  adminCreateMonster: (token: string, body: AdminMonsterBody & { id: string }) =>
+    request<{ monster: AdminMonsterRow }>('/api/admin/monsters', { method: 'POST', token, body }),
+  adminUpdateMonster: (token: string, id: string, body: AdminMonsterBody) =>
+    request<{ monster: AdminMonsterRow }>(`/api/admin/monsters/${id}`, { method: 'PUT', token, body }),
+  adminDeleteMonster: (token: string, id: string) =>
+    request<{ ok: true }>(`/api/admin/monsters/${id}`, { method: 'DELETE', token }),
+
+  adminListCharacters: (token: string) =>
+    request<{ characters: AdminCharacterRow[] }>('/api/admin/characters', { token }),
+  adminPatchCharacter: (token: string, id: string, body: AdminCharacterPatch) =>
+    request<{ character: unknown }>(`/api/admin/characters/${id}`, { method: 'PUT', token, body }),
+
+  adminReloadCache: (token: string) =>
+    request<{ ok: true }>('/api/admin/cache/reload', { method: 'POST', token }),
+
+  /** Slice 21: file upload. Multipart POST. Returns the public `/uploads/...`
+   *  path which the caller stores in Map.bgImage (or future Item/Monster art). */
+  adminUpload: async (token: string, file: File): Promise<{ url: string }> => {
+    const fd = new FormData()
+    fd.append('file', file)
+    const res = await fetch(`${API_URL}/api/admin/upload`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+      body: fd,
+    })
+    const json: unknown = await res.json().catch(() => null)
+    if (!res.ok) throw new ApiError(res.status, json)
+    return json as { url: string }
+  },
 }

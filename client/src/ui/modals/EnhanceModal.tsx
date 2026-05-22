@@ -1,8 +1,8 @@
 import { useGame } from '../../game/store'
-import { ITEMS } from '@asura/shared'
 
 export function EnhanceModal() {
   const game = useGame(s => s.game)
+  const items = useGame(s => s.content!.items)
   const enhance = useGame(s => s.enhance)
 
   const equipped: { key: string; slot: '_w' | '_a'; type: 'weapon' | 'armor' }[] = []
@@ -25,7 +25,8 @@ export function EnhanceModal() {
           ต้องสวมอาวุธหรือเกราะก่อน (ไปที่กระเป๋า → สวม)
         </div>
       ) : equipped.map(e => {
-        const it = ITEMS[e.key]
+        const it = items[e.key]
+        if (!it) return null
         const cur = game.plus[e.key + e.slot] || 0
         const success = Math.max(5, 95 - cur * 9)
         const cost = 1 + Math.floor(cur / 2)

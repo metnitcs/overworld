@@ -5,6 +5,8 @@ import { EnhanceModal } from './modals/EnhanceModal'
 import { ClassChangeModal } from './modals/ClassChangeModal'
 import { ShopModal } from './modals/ShopModal'
 import { HelpModal } from './modals/HelpModal'
+import { RaceChangeModal } from './modals/RaceChangeModal'
+import { StatusModal } from './modals/StatusModal'
 
 interface Props {
   type: ModalType
@@ -18,6 +20,8 @@ const titles: Record<Exclude<ModalType, 'none'>, string> = {
   'class-change': '🔄 เปลี่ยนอาชีพ',
   shop:           '💊 ร้านค้าหมู่บ้าน',
   help:           '❓ วิธีเล่น',
+  'race-change':  '✨ เควสเปลี่ยนเผ่า',
+  status:         '📊 สเตตัส (Lv up = +5 points)',
 }
 
 export function Modal({ type, onClose }: Props) {
@@ -45,6 +49,8 @@ export function Modal({ type, onClose }: Props) {
           {type === 'class-change' && <ClassChangeModal />}
           {type === 'shop'         && <ShopModal />}
           {type === 'help'         && <HelpModal />}
+          {type === 'race-change'  && <RaceChangeModal />}
+          {type === 'status'       && <StatusModal />}
         </div>
       </div>
     </div>

@@ -14,7 +14,9 @@ const prisma = new PrismaClient()
 const corsOrigin = process.env.CORS_ORIGIN
   ? process.env.CORS_ORIGIN.split(',').map((s) => s.trim())
   : ['http://localhost:5173']
-const app = buildServer({ prisma, jwtSecret, corsOrigin })
+const adminUsers = (process.env.ADMIN_USERS ?? '')
+  .split(',').map((s) => s.trim()).filter(Boolean)
+const app = buildServer({ prisma, jwtSecret, corsOrigin, adminUsers })
 
 const shutdown = async (signal: NodeJS.Signals) => {
   app.log.info({ signal }, 'shutting down')

@@ -10,3 +10,12 @@ dist
 *.tsbuildinfo
 vite.config.js
 vite.config.d.ts
+
+# Obsidian wiki vault
+vault/
+
+# Slice 21: admin-uploaded files (maps bg, etc.). Match both server/uploads
+# (production runtime) and project-root uploads/ (created when tests run
+# from the workspace root).
+uploads/
+server/uploads/

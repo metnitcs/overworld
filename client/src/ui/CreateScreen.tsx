@@ -1,24 +1,32 @@
 import { useState } from 'react'
 import { useGame } from '../game/store'
-import { RACES, CLASSES } from '@asura/shared'
+import { CLASSES, STARTER_RACE, TRANSCEND_LV } from '@asura/shared'
 
-// Character Creation lives in the Mochi design system (pre-game surface)
-// but unlike the Portal it stays inside the App shell's fixed 1280×860 frame
-// because it's a focused single-step UI, not a scrolling page.
-// See docs/adr/0001-dual-design-system-pre-game-vs-in-game.md.
+// Slice 17: race is auto-set to STARTER_RACE (มนุษย์) at creation. The Lv10
+// race-change quest is where the player picks มนุษย์/มาร/เทพ. Create flow
+// now only asks for class + name.
 
 export function CreateScreen() {
-  const [raceId, setRaceId] = useState(RACES[0].id)
   const [classId, setClassId] = useState(CLASSES[0].id)
   const [name, setName] = useState('')
   const newCharacter = useGame(s => s.newCharacter)
   const setScreen = useGame(s => s.setScreen)
+  const characters = useGame(s => s.characters)
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
 
-  const selectedRace = RACES.find(r => r.id === raceId)!
   const selectedClass = CLASSES.find(c => c.id === classId)!
 
-  function confirm() {
-    newCharacter(name.trim() || 'นักผจญภัย', raceId, classId)
+  async function confirm() {
+    setBusy(true)
+    setErr(null)
+    try {
+      await newCharacter(name.trim() || 'นักผจญภัย', classId)
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'สร้างไม่สำเร็จ')
+    } finally {
+      setBusy(false)
+    }
   }
 
   return (
@@ -27,7 +35,8 @@ export function CreateScreen() {
         <div>
           <h1>สร้างตัวละครใหม่</h1>
           <div className="sub" style={{ color: 'var(--muted)', fontSize: 13, marginTop: 2 }}>
-            เลือกเผ่าและอาชีพ แล้วตั้งชื่อตัวละครของคุณ · ขั้นตอน 1 จาก 1
+            ทุกตัวเริ่มต้นเป็น <b>{STARTER_RACE.name}</b> {STARTER_RACE.emoji} —
+            ถึง Lv {TRANSCEND_LV} จะได้ทำเควสเปลี่ยนเผ่าเป็น <b>มาร</b> หรือ <b>เทพ</b>
           </div>
         </div>
         <div className="hero-eyebrow">เซิร์ฟเวอร์ ซากุระ</div>
@@ -37,42 +46,22 @@ export function CreateScreen() {
         {/* Preview */}
         <aside className="preview-card">
           <div className="preview-art">
-            {selectedRace.emoji}
+            {STARTER_RACE.emoji}
           </div>
-          <div className="preview-name">{selectedRace.name}</div>
+          <div className="preview-name">{STARTER_RACE.name}</div>
           <div className="preview-sub">{selectedClass.emoji} {selectedClass.name}</div>
           <div className="preview-stats">
-            <div className="stat"><span className="k">HP</span><span className="v">{selectedRace.hp}</span></div>
-            <div className="stat"><span className="k">MP</span><span className="v">{selectedRace.mp + selectedClass.mp}</span></div>
-            <div className="stat"><span className="k">ATK</span><span className="v">{selectedRace.atk + selectedClass.atk}</span></div>
-            <div className="stat"><span className="k">DEF</span><span className="v">{selectedRace.def + selectedClass.def}</span></div>
-            <div className="stat"><span className="k">SPD</span><span className="v">{selectedRace.spd + selectedClass.spd}</span></div>
+            <div className="stat"><span className="k">HP</span><span className="v">{STARTER_RACE.hp}</span></div>
+            <div className="stat"><span className="k">MP</span><span className="v">{STARTER_RACE.mp + selectedClass.mp}</span></div>
+            <div className="stat"><span className="k">ATK</span><span className="v">{STARTER_RACE.atk + selectedClass.atk}</span></div>
+            <div className="stat"><span className="k">DEF</span><span className="v">{STARTER_RACE.def + selectedClass.def}</span></div>
+            <div className="stat"><span className="k">SPD</span><span className="v">{STARTER_RACE.spd + selectedClass.spd}</span></div>
             <div className="stat"><span className="k">สกิล</span><span className="v" style={{ fontSize: 12 }}>{selectedClass.skill.name}</span></div>
           </div>
         </aside>
 
-        {/* Race picker */}
-        <section className="picker-card">
-          <div className="picker-head">เลือกเผ่า</div>
-          <div className="picker-list">
-            {RACES.map(r => (
-              <div
-                key={r.id}
-                className={`pick-row ${raceId === r.id ? 'selected' : ''}`}
-                onClick={() => setRaceId(r.id)}
-              >
-                <div className="emoji">{r.emoji}</div>
-                <div className="info">
-                  <div className="nm">{r.name}</div>
-                  <div className="ds">{r.desc}</div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </section>
-
-        {/* Class picker */}
-        <section className="picker-card">
+        {/* Class picker — only one section now since race is auto */}
+        <section className="picker-card" style={{ gridColumn: 'span 2' }}>
           <div className="picker-head">เลือกอาชีพ</div>
           <div className="picker-list">
             {CLASSES.map(c => (
@@ -92,6 +81,10 @@ export function CreateScreen() {
         </section>
       </div>
 
+      {err && (
+        <div className="text-sm" style={{ color: '#dc2626' }} role="alert">{err}</div>
+      )}
+
       <div className="create-footer">
         <label>ชื่อ</label>
         <input
@@ -100,10 +93,17 @@ export function CreateScreen() {
           maxLength={12}
           value={name}
           onChange={e => setName(e.target.value)}
+          disabled={busy}
         />
-        <button className="btn btn-secondary" onClick={() => setScreen('title')}>← กลับ</button>
-        <button className="btn btn-primary" onClick={confirm}>
-          ยืนยัน เริ่มผจญภัย <span className="arrow">→</span>
+        <button
+          className="btn btn-secondary"
+          onClick={() => setScreen(characters.length > 0 ? 'character-select' : 'title')}
+          disabled={busy}
+        >
+          ← กลับ
+        </button>
+        <button className="btn btn-primary" onClick={confirm} disabled={busy}>
+          {busy ? 'กำลังสร้าง…' : 'ยืนยัน เริ่มผจญภัย'} <span className="arrow">→</span>
         </button>
       </div>
     </div>

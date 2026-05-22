@@ -1,19 +1,34 @@
-import { useEffect } from 'react'
-import { useGame, seedChat } from '../game/store'
-import { MAPS, RACES, CLASSES, expForLv } from '@asura/shared'
+import { useEffect, useState } from 'react'
+import {
+  useGame, seedChat,
+  subscribeSaveStatus, getSaveStatus, type SaveStatus,
+} from '../game/store'
+import { RACES, CLASSES, expForLv } from '@asura/shared'
 import { PhaserGame } from '../game/PhaserGame'
 import { ChatPanel } from './ChatPanel'
+
+const SAVE_STATUS_LABEL: Record<SaveStatus, string> = {
+  idle:   '',
+  saving: '💾 กำลังบันทึก…',
+  saved:  '✓ บันทึกแล้ว',
+  error:  '⚠ บันทึกล้มเหลว',
+}
 
 export function GameScreen() {
   const game = useGame(s => s.game)
   const setModal = useGame(s => s.setModal)
   const setScreen = useGame(s => s.setScreen)
-  const saveToStorage = useGame(s => s.saveToStorage)
   const chat = useGame(s => s.chat)
-  const map = MAPS[game.map]
+  // Map metadata comes from the content cache (ADR 0002). The App.tsx gate
+  // guarantees `content` is non-null before any game screen renders.
+  const mapInfo = useGame(s => s.content!.maps[s.game.map])
   const race = RACES.find(r => r.id === game.raceId)!
   const cls = CLASSES.find(c => c.id === game.classId)!
   const expNeed = expForLv(game.lv)
+
+  // Mirror autosave status into local state so React rerenders the badge.
+  const [saveStatus, setSaveStatus] = useState<SaveStatus>(() => getSaveStatus())
+  useEffect(() => subscribeSaveStatus(setSaveStatus), [])
 
   useEffect(() => {
     if (chat.length === 0) seedChat()
@@ -24,8 +39,21 @@ export function GameScreen() {
     <div className="w-full h-full flex flex-col bg-gradient-to-b from-kw-cream to-kw-cream-2">
       {/* TOP BAR */}
       <div className="top-bar">
-        <span className="font-bold">{map.name}</span>
-        <span className="text-kw-yellow">[ Asura Server x 1 ]</span>
+        <span className="font-bold">{mapInfo.name}</span>
+        <span className="text-kw-yellow">
+          [ Asura Server x 1 ]
+          {saveStatus !== 'idle' && (
+            <span
+              className={`ml-3 text-[11px] font-normal ${
+                saveStatus === 'error' ? 'text-kw-red' :
+                saveStatus === 'saving' ? 'text-white/70' :
+                'text-green-200'
+              }`}
+            >
+              {SAVE_STATUS_LABEL[saveStatus]}
+            </span>
+          )}
+        </span>
         <span>Map ({game.px}, {game.py})</span>
       </div>
 
@@ -74,24 +102,28 @@ export function GameScreen() {
           {/* Action button grid (round icons like DMO) */}
           <div className="panel panel-pad">
             <div className="panel-title">เมนู</div>
-            <div className="grid grid-cols-4 gap-2 justify-items-center">
+            <div className="grid grid-cols-3 gap-2 justify-items-center">
+              <ActionBtn icon="📊" label="สเตตัส"  color="green"   onClick={() => setModal('status')} />
               <ActionBtn icon="🎒" label="กระเป๋า" color=""        onClick={() => setModal('inventory')} />
               <ActionBtn icon="⚒"  label="คราฟ"   color="blue"    onClick={() => setModal('craft')} />
               <ActionBtn icon="✨" label="ตีบวก" color="pink"    onClick={() => setModal('enhance')} />
-              <ActionBtn icon="🔄" label="เปลี่ยนอาชีพ" color="green" onClick={() => setModal('class-change')} />
               <ActionBtn icon="💊" label="ร้านค้า" color="purple"  onClick={() => setModal('shop')} />
               <ActionBtn icon="❓" label="วิธีเล่น" color=""       onClick={() => setModal('help')} />
-              <ActionBtn icon="💾" label="บันทึก"  color="blue"   onClick={saveToStorage} />
-              <ActionBtn icon="🚪" label="ออก"     color="pink"   onClick={() => setScreen('title')} />
+              <ActionBtn icon="🚪" label="ออก"     color="pink"   onClick={() => setScreen('character-select')} />
+              {/*
+                Removed:
+                - "บันทึก" — autosave handles every game-state mutation
+                  (see store.ts subscribe + flushSave in App.tsx).
+                - "เปลี่ยนอาชีพ" — class is set permanently at character
+                  creation; multi-character support (slice 16) makes class
+                  change unnecessary. ClassChangeModal file kept for future
+                  "rebirth" or premium feature reuse.
+              */}
             </div>
           </div>
 
-          {/* Chat */}
+          {/* Chat + system log (tabs inside) */}
           <div className="panel flex-1 flex flex-col overflow-hidden">
-            <div className="px-2 pt-1.5 panel-title flex items-center gap-2">
-              💬 แชท
-              <span className="text-[9px] text-kw-text-dim font-normal">(ตัวอย่าง)</span>
-            </div>
             <ChatPanel />
           </div>
         </div>

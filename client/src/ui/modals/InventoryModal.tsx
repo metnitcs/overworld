@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useGame } from '../../game/store'
-import { ITEMS, type ItemType } from '@asura/shared'
+import type { ItemType, Rarity } from '@asura/shared'
 
 type Tab = 'all' | 'equip' | 'consume' | 'mat'
 
@@ -13,8 +13,23 @@ const TABS: { id: Tab; label: string; icon: string }[] = [
 
 const TOTAL_SLOTS = 32
 
+/** Border colour by rarity — small visual cue per ADR 0002 (display-only). */
+const RARITY_BORDER: Record<Rarity, string> = {
+  common:    'border-kw-border',
+  rare:      'border-blue-400',
+  epic:      'border-purple-500',
+  legendary: 'border-amber-500',
+}
+const RARITY_LABEL: Record<Rarity, string> = {
+  common:    'พื้นฐาน',
+  rare:      'หายาก',
+  epic:      'ตำนาน',
+  legendary: 'เทพ',
+}
+
 export function InventoryModal() {
   const game = useGame(s => s.game)
+  const items = useGame(s => s.content!.items)   // content gate in App.tsx guarantees non-null
   const equip = useGame(s => s.equip)
   const unequip = useGame(s => s.unequip)
   const useConsume = useGame(s => s.useConsume)
@@ -23,14 +38,15 @@ export function InventoryModal() {
 
   const allKeys = Object.keys(game.inventory).filter(k => game.inventory[k] > 0)
   let visibleKeys = allKeys
-  if (tab === 'equip')   visibleKeys = allKeys.filter(k => ['weapon', 'armor'].includes(ITEMS[k]?.type))
-  if (tab === 'consume') visibleKeys = allKeys.filter(k => ITEMS[k]?.type === 'consume')
-  if (tab === 'mat')     visibleKeys = allKeys.filter(k => ITEMS[k]?.type === 'mat')
+  if (tab === 'equip')   visibleKeys = allKeys.filter(k => ['weapon', 'armor'].includes(items[k]?.type as ItemType))
+  if (tab === 'consume') visibleKeys = allKeys.filter(k => items[k]?.type === 'consume')
+  if (tab === 'mat')     visibleKeys = allKeys.filter(k => items[k]?.type === 'mat')
 
-  const sel = selected && ITEMS[selected] ? selected : null
-  const selItem = sel ? ITEMS[sel] : null
+  const sel = selected && items[selected] ? selected : null
+  const selItem = sel ? items[sel] : null
   const selPlus = sel ? (game.plus[sel + '_w'] || game.plus[sel + '_a'] || 0) : 0
   const equipped = sel && (sel === game.equipWeapon || sel === game.equipArmor)
+  const selRarity: Rarity = selItem?.rarity ?? 'common'
 
   return (
     <div className="flex flex-col gap-2">
@@ -53,15 +69,16 @@ export function InventoryModal() {
           {Array.from({ length: Math.max(TOTAL_SLOTS, visibleKeys.length) }).map((_, i) => {
             const key = visibleKeys[i]
             if (!key) return <div key={i} className="inv-slot empty" />
-            const it = ITEMS[key]
+            const it = items[key]
             if (!it) return <div key={i} className="inv-slot empty" />
             const qty = game.inventory[key]
             const isEquipped = key === game.equipWeapon || key === game.equipArmor
             const plus = game.plus[key + '_w'] || game.plus[key + '_a'] || 0
+            const rarityBorder = RARITY_BORDER[it.rarity ?? 'common']
             return (
               <div
                 key={i}
-                className={`inv-slot ${isEquipped ? 'equipped' : ''} ${selected === key ? '!border-kw-orange ring-2 ring-kw-orange/40' : ''}`}
+                className={`inv-slot ${rarityBorder} ${isEquipped ? 'equipped' : ''} ${selected === key ? '!border-kw-orange ring-2 ring-kw-orange/40' : ''}`}
                 onClick={() => setSelected(key)}
               >
                 {it.emoji}
@@ -83,6 +100,9 @@ export function InventoryModal() {
                 {selItem.name}
                 {selPlus > 0 && <span className="text-kw-red ml-1">+{selPlus}</span>}
                 {equipped && <span className="text-green-600 text-xs ml-2">(สวมอยู่)</span>}
+                <span className={`ml-2 text-[10px] font-semibold px-1.5 py-0.5 rounded border ${RARITY_BORDER[selRarity]}`}>
+                  {RARITY_LABEL[selRarity]}
+                </span>
               </div>
               <div className="text-xs text-kw-text-dim mt-0.5">{selItem.desc}</div>
               <div className="text-xs text-kw-blue-deep mt-1 font-semibold">
