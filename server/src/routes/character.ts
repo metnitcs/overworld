@@ -110,6 +110,12 @@ const healFullSchema = z.object({
   npcId: z.string().min(1),
 })
 
+/** Slice 42: craft intent. `recipeId` mirrors the result item id
+ *  (1 recipe per output, see Recipe model). */
+const craftSchema = z.object({
+  recipeId: z.string().min(1),
+})
+
 const DEFAULT_INVENTORY: Record<string, number> = { 'potion-s': 3 }
 
 /** Map a DB Character (+inventory rows) into the API shape, which mirrors the
@@ -833,6 +839,74 @@ export function registerCharacterRoutes(app: FastifyInstance): void {
         mp: existing.maxMp,
       },
       include: { inventory: true },
+    })
+    return reply.send({ character: toApiCharacter(updated) })
+  })
+
+  // ─── POST /api/character/:id/craft — Slice 42 intent endpoint ────────────
+  // Server validates classReq + mats + gold from the DB recipe (not the
+  // client-supplied prices) and runs the whole spend+gain in a single
+  // transaction so a race can't half-craft. Mat decrements delete the
+  // inventory row when qty hits zero.
+  app.post('/api/character/:id/craft', { preHandler: app.requireAuth }, async (req, reply) => {
+    const parsed = craftSchema.safeParse(req.body)
+    if (!parsed.success) {
+      return reply.code(400).send({ error: 'invalid input', issues: parsed.error.issues })
+    }
+    const { id } = req.params as { id: string }
+    const { recipeId } = parsed.data
+
+    const existing = await app.prisma.character.findUnique({
+      where: { id }, include: { inventory: true },
+    })
+    if (!existing || existing.userId !== req.userId) {
+      return reply.code(404).send({ error: 'character not found' })
+    }
+    const recipe = await app.prisma.recipe.findUnique({
+      where: { id: recipeId }, include: { mats: true },
+    })
+    if (!recipe) return reply.code(404).send({ error: 'recipe not found' })
+
+    const classReq = recipe.classReq as string[] | null
+    if (classReq !== null && !classReq.includes(existing.classId)) {
+      return reply.code(409).send({ error: 'class not allowed to craft this' })
+    }
+    if (existing.gold < recipe.gold) {
+      return reply.code(409).send({ error: 'insufficient gold' })
+    }
+    const invMap = new Map(existing.inventory.map((it) => [it.itemKey, it.qty]))
+    for (const m of recipe.mats) {
+      if ((invMap.get(m.itemId) ?? 0) < m.qty) {
+        return reply.code(409).send({ error: `insufficient mat: ${m.itemId}` })
+      }
+    }
+
+    const updated = await app.prisma.$transaction(async (tx) => {
+      await tx.character.update({
+        where: { id: existing.id },
+        data: { gold: existing.gold - recipe.gold },
+      })
+      for (const m of recipe.mats) {
+        const curQty = invMap.get(m.itemId) ?? 0
+        if (curQty <= m.qty) {
+          await tx.inventoryItem.delete({
+            where: { characterId_itemKey: { characterId: existing.id, itemKey: m.itemId } },
+          })
+        } else {
+          await tx.inventoryItem.update({
+            where: { characterId_itemKey: { characterId: existing.id, itemKey: m.itemId } },
+            data: { qty: curQty - m.qty },
+          })
+        }
+      }
+      await tx.inventoryItem.upsert({
+        where: { characterId_itemKey: { characterId: existing.id, itemKey: recipeId } },
+        create: { characterId: existing.id, itemKey: recipeId, qty: 1 },
+        update: { qty: { increment: 1 } },
+      })
+      return tx.character.findUniqueOrThrow({
+        where: { id: existing.id }, include: { inventory: true },
+      })
     })
     return reply.send({ character: toApiCharacter(updated) })
   })

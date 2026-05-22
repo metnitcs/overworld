@@ -1205,20 +1205,35 @@ export const useGame = create<Store>()(
         }
       },
 
+      // Slice 42: craft flows through server intent — atomic spend+gain
+      // protects against half-craft on a race + cheaper-recipe spoof.
       craft: (resultKey) => {
-        const { game, content } = get()
-        if (!content) return false
+        const token = get().token
+        const id = get().activeCharacterId
+        const content = get().content
+        if (!token || !id || !content) return false
         const rec = content.recipes.find(r => r.result === resultKey)
         if (!rec) return false
-        for (const k of Object.keys(rec.mats)) {
-          if ((game.inventory[k] || 0) < rec.mats[k]) return false
-        }
-        if (game.gold < rec.gold) return false
-        for (const k of Object.keys(rec.mats)) get().removeItem(k, rec.mats[k])
-        get().spendGold(rec.gold)
-        get().addItem(resultKey)
         const itemName = content.items[resultKey]?.name ?? resultKey
-        get().log(`⚒ คราฟ ${itemName} สำเร็จ!`, 'good')
+        void (async () => {
+          setSaveStatus('saving')
+          try {
+            const r = await api.craftRecipe(token, id, resultKey)
+            const { id: _, updatedAt, ...gameState } = r.character
+            void _
+            rememberSync(id, updatedAt)
+            const next = deriveStats(gameState, { items: get().content?.items })
+            useGame.setState({ game: next })
+            lastSavedSnapshot = snapshotOf(next)
+            setSaveStatus('saved')
+            get().log(`⚒ คราฟ ${itemName} สำเร็จ!`, 'good')
+          } catch (err) {
+            setSaveStatus('error')
+            const msg = err instanceof ApiError && err.body && typeof err.body === 'object' && 'error' in err.body
+              ? String((err.body as { error: string }).error) : String(err)
+            get().log(`คราฟไม่ได้: ${msg}`, 'bad')
+          }
+        })()
         return true
       },
 

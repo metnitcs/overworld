@@ -422,6 +422,13 @@ export const api = {
       method: 'POST', token, body: { npcId },
     }),
 
+  /** Slice 42 — craft a recipe. Server validates classReq + mats + gold
+   *  against DB recipe and runs the spend+gain in a single transaction. */
+  craftRecipe: (token: string, id: string, recipeId: string) =>
+    request<CharacterResponse>(`/api/character/${id}/craft`, {
+      method: 'POST', token, body: { recipeId },
+    }),
+
   // ─── Legacy first-char endpoints (kept until full removal) ───
   getCharacter: (token: string) =>
     request<CharacterResponse>('/api/character', { token }),

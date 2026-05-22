@@ -1026,6 +1026,108 @@ describe('POST /api/character/:id/heal-full', () => {
   })
 })
 
+// ─── Slice 42 — craft intent endpoint ─────────────────────────────────────
+describe('POST /api/character/:id/craft', () => {
+  it('spends gold + mats and produces the result item', async () => {
+    const token = await registerAndGetToken('test_craft_ok')
+    const created = await app.inject({
+      method: 'POST', url: '/api/character', headers: { authorization: `Bearer ${token}` },
+      payload: { name: 'C' },
+    })
+    const id = (created.json() as { character: { id: string } }).character.id
+
+    // Pick the first recipe with no class restriction so we don't have to
+    // wrestle with classChange. Stock the character with its mats + gold.
+    const recipe = await prisma.recipe.findFirstOrThrow({
+      where: { classReq: { equals: null } }, include: { mats: true },
+    })
+    await prisma.character.update({ where: { id }, data: { gold: recipe.gold + 1000 } })
+    for (const m of recipe.mats) {
+      await prisma.inventoryItem.upsert({
+        where: { characterId_itemKey: { characterId: id, itemKey: m.itemId } },
+        create: { characterId: id, itemKey: m.itemId, qty: m.qty },
+        update: { qty: m.qty },
+      })
+    }
+
+    const res = await app.inject({
+      method: 'POST', url: `/api/character/${id}/craft`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { recipeId: recipe.id },
+    })
+    expect(res.statusCode).toBe(200)
+    const body = res.json() as { character: { gold: number; inventory: Record<string, number> } }
+    // Mats consumed (deleted because we stocked exact qty).
+    for (const m of recipe.mats) {
+      expect(body.character.inventory[m.itemId]).toBeUndefined()
+    }
+    // Result produced.
+    expect(body.character.inventory[recipe.id]).toBe(1)
+    expect(body.character.gold).toBe(1000)
+  })
+
+  it('rejects crafting with insufficient mats (409)', async () => {
+    const token = await registerAndGetToken('test_craft_no_mats')
+    const created = await app.inject({
+      method: 'POST', url: '/api/character', headers: { authorization: `Bearer ${token}` },
+      payload: { name: 'M' },
+    })
+    const id = (created.json() as { character: { id: string } }).character.id
+    const recipe = await prisma.recipe.findFirstOrThrow({
+      where: { classReq: { equals: null } }, include: { mats: true },
+    })
+    await prisma.character.update({ where: { id }, data: { gold: 10_000 } })
+    // No mats stocked.
+    const res = await app.inject({
+      method: 'POST', url: `/api/character/${id}/craft`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { recipeId: recipe.id },
+    })
+    expect(res.statusCode).toBe(409)
+  })
+
+  it('rejects crafting with insufficient gold (409)', async () => {
+    const token = await registerAndGetToken('test_craft_no_gold')
+    const created = await app.inject({
+      method: 'POST', url: '/api/character', headers: { authorization: `Bearer ${token}` },
+      payload: { name: 'G' },
+    })
+    const id = (created.json() as { character: { id: string } }).character.id
+    const recipe = await prisma.recipe.findFirstOrThrow({
+      where: { classReq: { equals: null } }, include: { mats: true },
+    })
+    for (const m of recipe.mats) {
+      await prisma.inventoryItem.upsert({
+        where: { characterId_itemKey: { characterId: id, itemKey: m.itemId } },
+        create: { characterId: id, itemKey: m.itemId, qty: m.qty },
+        update: { qty: m.qty },
+      })
+    }
+    await prisma.character.update({ where: { id }, data: { gold: 0 } })
+    const res = await app.inject({
+      method: 'POST', url: `/api/character/${id}/craft`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { recipeId: recipe.id },
+    })
+    expect(res.statusCode).toBe(409)
+  })
+
+  it('returns 404 for an unknown recipe', async () => {
+    const token = await registerAndGetToken('test_craft_unknown')
+    const created = await app.inject({
+      method: 'POST', url: '/api/character', headers: { authorization: `Bearer ${token}` },
+      payload: { name: 'U' },
+    })
+    const id = (created.json() as { character: { id: string } }).character.id
+    const res = await app.inject({
+      method: 'POST', url: `/api/character/${id}/craft`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { recipeId: 'no-such-recipe' },
+    })
+    expect(res.statusCode).toBe(404)
+  })
+})
+
 describe('DELETE /api/character/:id (Slice 16 slot reclaim)', () => {
   it('removes the character so the slot can be reused', async () => {
     const token = await registerAndGetToken('test_del')
