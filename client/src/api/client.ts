@@ -415,7 +415,7 @@ export const api = {
   adminListCharacters: (token: string) =>
     request<{ characters: AdminCharacterRow[] }>('/api/admin/characters', { token }),
   adminPatchCharacter: (token: string, id: string, body: AdminCharacterPatch) =>
-    request<{ character: unknown }>(`/api/admin/characters/${id}`, { method: 'PUT', token, body }),
+    request<{ character: AdminCharacterRow }>(`/api/admin/characters/${id}`, { method: 'PUT', token, body }),
   adminDeleteCharacter: (token: string, id: string) =>
     request<{ ok: true }>(`/api/admin/characters/${id}`, { method: 'DELETE', token }),
 

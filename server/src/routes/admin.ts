@@ -596,7 +596,7 @@ export function registerAdminRoutes(app: FastifyInstance): void {
     // scalar update + apply it in a transaction (mirrors PUT /api/character/:id).
     const { inventory, ...scalars } = parsed.data
     const updated = await app.prisma.$transaction(async (tx) => {
-      const row = await tx.character.update({
+      await tx.character.update({
         where: { id },
         data: scalars,
       })
@@ -611,13 +611,49 @@ export function registerAdminRoutes(app: FastifyInstance): void {
           })
         }
       }
-      return row
+      // Slice 35: re-fetch with inventory included so the client can use
+      // the response directly without a second GET. Previously the PUT
+      // returned just the scalar row, so the admin UI either had to
+      // pull the list again or assume stale.
+      return tx.character.findUniqueOrThrow({
+        where: { id }, include: { inventory: true },
+      })
     })
     await app.audit({
       actorUserId: req.userId, action: 'character.update',
       targetType: 'character', targetId: id, payload: parsed.data,
     })
-    return reply.send({ character: updated })
+    // Project into the same shape as the list endpoint so the client
+    // can splice it directly into the table cache.
+    const inv: Record<string, number> = {}
+    for (const it of updated.inventory) inv[it.itemKey] = it.qty
+    const user = await app.prisma.user.findUnique({
+      where: { id: updated.userId }, select: { username: true },
+    })
+    return reply.send({
+      character: {
+        id: updated.id,
+        username: user?.username ?? '',
+        name: updated.name,
+        raceId: updated.raceId,
+        classId: updated.classId,
+        lv: updated.lv,
+        exp: updated.exp,
+        gold: updated.gold,
+        mapId: updated.mapId,
+        transcended: updated.transcended,
+        classChanged: updated.classChanged,
+        str: updated.str, int: updated.int, dex: updated.dex,
+        agi: updated.agi, luk: updated.luk, vit: updated.vit,
+        unspentPoints: updated.unspentPoints,
+        hp: updated.hp, maxHp: updated.maxHp, mp: updated.mp, maxMp: updated.maxMp,
+        atk: updated.atk, def: updated.def, spd: updated.spd,
+        equipWeapon: updated.equipWeapon,
+        equipArmor: updated.equipArmor,
+        plus: updated.plus,
+        inventory: inv,
+      },
+    })
   })
 
   app.delete('/api/admin/characters/:id', guard, async (req, reply) => {

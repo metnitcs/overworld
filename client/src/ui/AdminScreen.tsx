@@ -1241,8 +1241,14 @@ function CharactersTab({ onCount }: { onCount: (n: number) => void }) {
   async function save(patch: AdminCharacterPatch, id: string, name: string) {
     setErr(null); setOk(null)
     try {
-      await api.adminPatchCharacter(token, id, patch)
-      setOk(`บันทึก ${name} แล้ว`); setEditing(null); await load()
+      // Slice 35: server returns the FULL updated row (inventory + plus
+      // + everything) — splice it into the local cache so re-opening
+      // the editor on the same character shows the just-saved values
+      // immediately, without waiting for a full re-list.
+      const r = await api.adminPatchCharacter(token, id, patch)
+      setOk(`บันทึก ${name} แล้ว`)
+      setEditing(null)
+      setChars((prev) => prev?.map((c) => c.id === id ? r.character : c) ?? null)
     } catch (e) {
       setErr(e instanceof ApiError ? `${e.status}: ${JSON.stringify(e.body)}` : String(e))
     }

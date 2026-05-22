@@ -451,7 +451,7 @@ export const useGame = create<Store>()(
         void _
         set({
           activeCharacterId: id,
-          game: deriveStats(gameState),
+          game: deriveStats(gameState, { items: get().content?.items }),
           monsters: spawnForMap(mapInfo, gameState.px, gameState.py),
           chat: [],
           screen: 'game',
@@ -493,7 +493,7 @@ export const useGame = create<Store>()(
         const { id: _, ...gameState } = r.character
         void _
         // Recompute derived stats with the new race.
-        set({ game: deriveStats(gameState) })
+        set({ game: deriveStats(gameState, { items: get().content?.items }) })
         await get().listCharacters()   // refresh roster cache
         get().log(`✨ เปลี่ยนเผ่าเป็น ${raceId}!`, 'good')
       },
@@ -507,7 +507,7 @@ export const useGame = create<Store>()(
         void _
         // Recompute derived stats (in case formulas changed in shared
         // logic since the save).
-        set({ game: deriveStats(gameState) })
+        set({ game: deriveStats(gameState, { items: get().content?.items }) })
         // Refresh roster cache so character-select reflects latest too.
         await get().listCharacters()
       },
@@ -521,7 +521,7 @@ export const useGame = create<Store>()(
         void _
         // No stat shift on class change — just rederive in case the new
         // skill's mp cost matters for derived display.
-        set({ game: deriveStats(gameState) })
+        set({ game: deriveStats(gameState, { items: get().content?.items }) })
         await get().listCharacters()
         const cls = get().content?.classes.find((c) => c.id === classId)
         get().log(`🎯 เปลี่ยนคลาสเป็น ${cls?.name ?? classId}!`, 'good')
@@ -664,7 +664,7 @@ export const useGame = create<Store>()(
         set({ monsters: next })
       },
 
-      recalc: () => set({ game: deriveStats(get().game) }),
+      recalc: () => set({ game: deriveStats(get().game, { items: get().content?.items }) }),
 
       gainExp: (amt) => {
         const cur = get().game
@@ -702,7 +702,7 @@ export const useGame = create<Store>()(
           for (let i = 1; i <= levelsGained; i++) {
             get().log(`🎉 เลเวลอัพ! ตอนนี้ Lv ${cur.lv + i}`, 'good')
           }
-          g = deriveStats(g)
+          g = deriveStats(g, { items: get().content?.items })
           g.hp = g.maxHp
           g.mp = g.maxMp
         }
@@ -1006,7 +1006,7 @@ export const useGame = create<Store>()(
         }
         g[slot] = key
 
-        const next = deriveStats(g)
+        const next = deriveStats(g, { items: get().content?.items })
         set({ game: next })
         get().log(`สวม ${it.name}`, 'good')
         void persistGameNow(get, set, prev)
@@ -1027,7 +1027,7 @@ export const useGame = create<Store>()(
         }
         if (!cleared) return
         const it = get().content?.items[key]
-        const next = deriveStats(g)
+        const next = deriveStats(g, { items: get().content?.items })
         set({ game: next })
         get().log(`ถอด ${it?.name ?? key} (คืนเข้ากระเป๋า)`, 'system')
         void persistGameNow(get, set, prev)
@@ -1093,13 +1093,13 @@ export const useGame = create<Store>()(
         const g = { ...get().game, plus: { ...get().game.plus } }
         g.plus[key + slot] = r.newPlus
         if (r.outcome === 'ok') {
-          set({ game: deriveStats(g) })
+          set({ game: deriveStats(g, { items: get().content?.items }) })
           const name = get().content?.items[key]?.name ?? key
           get().log(`✨ ตีบวก ${name} สำเร็จ! → +${r.newPlus}`, 'good')
           return 'ok'
         } else {
           if (r.newPlus !== cur) {
-            set({ game: deriveStats(g) })
+            set({ game: deriveStats(g, { items: get().content?.items }) })
             get().log(`💥 ตีบวกล้มเหลว! ลดเหลือ +${r.newPlus}`, 'bad')
           } else {
             set({ game: g })
@@ -1112,7 +1112,7 @@ export const useGame = create<Store>()(
       changeClass: (classId, cost) => {
         if (!get().spendGold(cost)) return false
         const g = { ...get().game, classId }
-        set({ game: deriveStats(g) })
+        set({ game: deriveStats(g, { items: get().content?.items }) })
         const newCls = get().content?.classes.find(c => c.id === classId)
         get().log(`🔄 เปลี่ยนอาชีพเป็น ${newCls?.name ?? classId}`, 'good')
         return true
@@ -1125,7 +1125,7 @@ export const useGame = create<Store>()(
         const r = await api.allocateStat(token, id, stat, amount)
         const { id: _, ...gameState } = r.character
         void _
-        set({ game: deriveStats(gameState) })
+        set({ game: deriveStats(gameState, { items: get().content?.items }) })
       },
 
       resetStats: async () => {
@@ -1135,7 +1135,7 @@ export const useGame = create<Store>()(
         const r = await api.resetCharacterStats(token, id)
         const { id: _, ...gameState } = r.character
         void _
-        set({ game: deriveStats(gameState) })
+        set({ game: deriveStats(gameState, { items: get().content?.items }) })
         get().log('✨ รีเซ็ตสเตตัสแล้ว — กระจาย point ใหม่ได้เลย', 'good')
       },
 

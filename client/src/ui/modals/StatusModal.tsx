@@ -34,7 +34,8 @@ export function StatusModal() {
   const [err, setErr] = useState<string | null>(null)
   const [confirmReset, setConfirmReset] = useState(false)
 
-  const derived = deriveCombatStats(game)
+  const items = useGame((s) => s.content!.items)
+  const derived = deriveCombatStats(game, { items })
 
   async function spend(stat: PrimaryStat, amount: number) {
     if (busy || amount > game.unspentPoints) return

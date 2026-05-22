@@ -2,13 +2,27 @@
 // Race/class no longer contribute legacy offsets — race's effect lives in
 // the primary stats themselves (folded in at creation/transcend by
 // applyRaceModifiers in allocate.ts), and class is a recommendation only.
-import type { GameState, DerivedStats } from '../types.js'
+//
+// Slice 35: items are admin-editable in DB (Slice 8 + 28), so the static
+// `ITEMS` from data.ts is just the seed — runtime should use the live
+// content cache. deriveStats / deriveCombatStats now accept an optional
+// `items` map to override the seed. Client passes `content.items`; server
+// + tests can still call without it and fall back to the seed.
+import type { GameState, DerivedStats, ItemDef } from '../types.js'
 import { ITEMS, BASE_HP, BASE_MP } from '../data.js'
+
+export interface DeriveOptions {
+  /** Live item lookup. Pass `content.items` from the store to pick up
+   *  admin edits / brand-new items added via the admin panel. When
+   *  omitted, falls back to the static seed in `shared/src/data.ts`. */
+  items?: Record<string, ItemDef>
+}
 
 /** Pure derivation from primary stats + lv. Exposed for callers that need
  *  the raw numbers without mutating a full GameState (e.g. preview in the
  *  Status modal, server validation). */
-export function deriveCombatStats(g: GameState): DerivedStats {
+export function deriveCombatStats(g: GameState, opts: DeriveOptions = {}): DerivedStats {
+  const items = opts.items ?? ITEMS
   const lvb = g.lv - 1
 
   // Primary-derived. Formula from the design proposal (Slice 23 docs)
@@ -35,13 +49,13 @@ export function deriveCombatStats(g: GameState): DerivedStats {
   // and matk fold in, and enhance adds +3 per plus to the matching stat
   // (matk plus bonus only when the weapon actually has matk).
   if (g.equipWeapon) {
-    const it = ITEMS[g.equipWeapon]
+    const it = items[g.equipWeapon]
     const plus = g.plus[g.equipWeapon + '_w'] || 0
     pAtk += (it?.atk  || 0) + plus * 3
     mAtk += (it?.matk || 0) + (it?.matk ? plus * 3 : 0)
   }
   if (g.equipArmor) {
-    const it = ITEMS[g.equipArmor]
+    const it = items[g.equipArmor]
     const plus = g.plus[g.equipArmor + '_a'] || 0
     pDef += (it?.def  || 0) + plus * 2
     mDef += (it?.matk || 0)
@@ -54,8 +68,8 @@ export function deriveCombatStats(g: GameState): DerivedStats {
  *  only on the input state and game data constants. Current hp/mp are
  *  re-clamped to the (possibly changed) maxima; a falsy current value means
  *  "fill to max" (used right after character creation or after a stat reset). */
-export function deriveStats(g: GameState): GameState {
-  const d = deriveCombatStats(g)
+export function deriveStats(g: GameState, opts: DeriveOptions = {}): GameState {
+  const d = deriveCombatStats(g, opts)
   return {
     ...g,
     maxHp: d.maxHp,

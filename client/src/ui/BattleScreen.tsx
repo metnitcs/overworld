@@ -54,7 +54,7 @@ export function BattleScreen() {
   // Build derived combatants for the new resolveAttack(): players use the
   // full primary-stat formulas, monsters use the seeded acc/dodge/crit from
   // scaleEnemy().
-  const playerCombat = deriveCombatStats(game)
+  const playerCombat = deriveCombatStats(game, { items })
   const playerCombatant: Combatant = {
     atk: playerCombat.pAtk, def: playerCombat.pDef,
     acc: playerCombat.acc, dodge: playerCombat.dodge, crit: playerCombat.crit,
