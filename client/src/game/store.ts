@@ -976,13 +976,36 @@ export const useGame = create<Store>()(
       // Slice 32: equip/unequip are explicit API calls (await PUT) so a
       // refresh immediately after a click still sees the new state on the
       // server. Local set() is optimistic; on PUT failure we log + revert.
+      // Slice 33: items move between inventory and equip slot — equipping
+      // CONSUMES 1 from inventory, unequipping RETURNS 1. Previously the
+      // slot and inventory were independent, which meant unequipping an
+      // admin-assigned item with qty=0 in inventory deleted it forever.
       equip: (key) => {
         const it = get().content?.items[key]
         if (!it) return
         const prev = get().game
-        const g = { ...prev }
-        if (it.type === 'weapon') g.equipWeapon = key
-        else if (it.type === 'armor') g.equipArmor = key
+        const g = { ...prev, inventory: { ...prev.inventory }, plus: { ...prev.plus } }
+
+        // Must have it in inventory to equip (admins should give items to
+        // inv first, not assign equipWeapon directly).
+        if ((g.inventory[key] || 0) < 1) {
+          get().log(`ไม่มี ${it.name} ในกระเป๋า`, 'bad')
+          return
+        }
+
+        const slot: 'equipWeapon' | 'equipArmor' = it.type === 'weapon' ? 'equipWeapon' : 'equipArmor'
+        if (slot !== 'equipWeapon' && slot !== 'equipArmor') return
+        const oldKey = g[slot]
+
+        // Take new from inventory
+        g.inventory[key] = (g.inventory[key] || 0) - 1
+        if (g.inventory[key] <= 0) delete g.inventory[key]
+        // Return old to inventory (if any was equipped)
+        if (oldKey) {
+          g.inventory[oldKey] = (g.inventory[oldKey] || 0) + 1
+        }
+        g[slot] = key
+
         const next = deriveStats(g)
         set({ game: next })
         get().log(`สวม ${it.name}`, 'good')
@@ -990,11 +1013,23 @@ export const useGame = create<Store>()(
       },
       unequip: (key) => {
         const prev = get().game
-        const g = { ...prev }
-        if (g.equipWeapon === key) g.equipWeapon = null
-        if (g.equipArmor === key) g.equipArmor = null
+        const g = { ...prev, inventory: { ...prev.inventory } }
+        let cleared = false
+        if (g.equipWeapon === key) {
+          g.equipWeapon = null
+          g.inventory[key] = (g.inventory[key] || 0) + 1
+          cleared = true
+        }
+        if (g.equipArmor === key) {
+          g.equipArmor = null
+          g.inventory[key] = (g.inventory[key] || 0) + 1
+          cleared = true
+        }
+        if (!cleared) return
+        const it = get().content?.items[key]
         const next = deriveStats(g)
         set({ game: next })
+        get().log(`ถอด ${it?.name ?? key} (คืนเข้ากระเป๋า)`, 'system')
         void persistGameNow(get, set, prev)
       },
       useConsume: (key) => {

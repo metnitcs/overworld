@@ -193,6 +193,25 @@ export interface AdminCharacterRow {
   mapId: string
   transcended: boolean
   classChanged: boolean
+  // Slice 33: full row now returned so the admin editor can pre-fill.
+  str: number
+  int: number
+  dex: number
+  agi: number
+  luk: number
+  vit: number
+  unspentPoints: number
+  hp: number
+  maxHp: number
+  mp: number
+  maxMp: number
+  atk: number
+  def: number
+  spd: number
+  equipWeapon: string | null
+  equipArmor: string | null
+  plus: Record<string, number>
+  inventory: Record<string, number>
 }
 
 export interface AdminCharacterPatch {

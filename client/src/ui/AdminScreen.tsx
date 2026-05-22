@@ -1316,8 +1316,9 @@ function CharacterEditorForm({
   onSubmit: (patch: AdminCharacterPatch) => void
   onCancel: () => void
 }) {
-  // Form state — start with current values from the row (some fields like
-  // primary stats aren't on AdminCharacterRow yet, so we default-fill).
+  // Slice 33: pre-fill EVERY field from the row so saving without
+  // touching a field doesn't nuke that field. Previously inventory/plus
+  // defaulted to '{}' which deleted items on save.
   const [lv, setLv] = useState(initial.lv)
   const [exp, setExp] = useState(initial.exp)
   const [gold, setGold] = useState(initial.gold)
@@ -1325,16 +1326,16 @@ function CharacterEditorForm({
   const [raceId, setRaceId] = useState(initial.raceId)
   const [classId, setClassId] = useState(initial.classId)
   const [transcended, setTranscended] = useState(initial.transcended)
-  const [classChanged, setClassChanged] = useState(false) // not in row type; admin can flip
-  // Inventory + equip + plus + primary stats are JSON-edited for speed.
-  // (Future: dedicated row editors. JSON keeps the slice tractable.)
+  const [classChanged, setClassChanged] = useState(initial.classChanged)
   const [primaryJson, setPrimaryJson] = useState(JSON.stringify({
-    str: 10, int: 10, dex: 10, agi: 10, luk: 10, vit: 10, unspentPoints: 0,
+    str: initial.str, int: initial.int, dex: initial.dex,
+    agi: initial.agi, luk: initial.luk, vit: initial.vit,
+    unspentPoints: initial.unspentPoints,
   }, null, 2))
-  const [inventoryJson, setInventoryJson] = useState('{}')
-  const [equipWeapon, setEquipWeapon] = useState('')
-  const [equipArmor, setEquipArmor] = useState('')
-  const [plusJson, setPlusJson] = useState('{}')
+  const [inventoryJson, setInventoryJson] = useState(JSON.stringify(initial.inventory, null, 2))
+  const [equipWeapon, setEquipWeapon] = useState(initial.equipWeapon ?? '')
+  const [equipArmor, setEquipArmor] = useState(initial.equipArmor ?? '')
+  const [plusJson, setPlusJson] = useState(JSON.stringify(initial.plus, null, 2))
   const [jsonErr, setJsonErr] = useState<string | null>(null)
 
   function submit(e: React.FormEvent) {
@@ -1417,7 +1418,7 @@ function CharacterEditorForm({
       </div>
 
       <div style={{ marginTop: 12, fontSize: 12, color: '#6b7280' }}>
-        ⚠️ Primary stats / Inventory / Plus ใช้ JSON edit (ช่อง textarea ข้างล่าง) — เพราะ row ปัจจุบันยังไม่คืน fields นี้กลับมา ให้ค้นหา UI ละเอียดในสไลซ์ถัดไป
+        ✏️ Primary stats / Inventory / Plus pre-fill จากค่าปัจจุบัน — แก้ตรงๆ ใน textarea ข้างล่างได้เลย
       </div>
 
       <div className="admin-form-row" style={{ gridTemplateColumns: 'repeat(3, 1fr)', marginTop: 6 }}>

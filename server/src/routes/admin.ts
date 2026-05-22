@@ -543,26 +543,46 @@ export function registerAdminRoutes(app: FastifyInstance): void {
   })
 
   // ── Characters ──
+  // Slice 33: GET now returns the FULL character row (primary stats,
+  // equip, plus, inventory) so the admin character editor can pre-fill
+  // current values instead of defaulting JSON fields to '{}' (which
+  // previously nuked inventory on save).
   app.get('/api/admin/characters', guard, async (_req, reply) => {
     const characters = await app.prisma.character.findMany({
       orderBy: { updatedAt: 'desc' },
-      take: 200, // hard cap so a giant DB doesn't blow up the panel
-      include: { user: { select: { username: true } } },
+      take: 200,
+      include: {
+        user: { select: { username: true } },
+        inventory: true,
+      },
     })
     return reply.send({
-      characters: characters.map((c) => ({
-        id: c.id,
-        username: c.user.username,
-        name: c.name,
-        raceId: c.raceId,
-        classId: c.classId,
-        lv: c.lv,
-        exp: c.exp,
-        gold: c.gold,
-        mapId: c.mapId,
-        transcended: c.transcended,
-        classChanged: c.classChanged,
-      })),
+      characters: characters.map((c) => {
+        const inv: Record<string, number> = {}
+        for (const it of c.inventory) inv[it.itemKey] = it.qty
+        return {
+          id: c.id,
+          username: c.user.username,
+          name: c.name,
+          raceId: c.raceId,
+          classId: c.classId,
+          lv: c.lv,
+          exp: c.exp,
+          gold: c.gold,
+          mapId: c.mapId,
+          transcended: c.transcended,
+          classChanged: c.classChanged,
+          // Slice 33 additions:
+          str: c.str, int: c.int, dex: c.dex, agi: c.agi, luk: c.luk, vit: c.vit,
+          unspentPoints: c.unspentPoints,
+          hp: c.hp, maxHp: c.maxHp, mp: c.mp, maxMp: c.maxMp,
+          atk: c.atk, def: c.def, spd: c.spd,
+          equipWeapon: c.equipWeapon,
+          equipArmor: c.equipArmor,
+          plus: c.plus,
+          inventory: inv,
+        }
+      }),
     })
   })
 
