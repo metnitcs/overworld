@@ -92,6 +92,9 @@ export function GameScreen() {
             </div>
           </div>
 
+          {/* Equipped (Slice 31) — quick read of what's worn right now */}
+          <EquippedPanel />
+
           {/* Stats + gold */}
           <div className="panel panel-pad">
             <div className="grid grid-cols-2 gap-x-2 text-xs">
@@ -147,6 +150,74 @@ function ActionBtn(props: {
         {props.icon}
       </button>
       <span className="text-[9px] text-kw-text-dim font-semibold">{props.label}</span>
+    </div>
+  )
+}
+
+/** Slice 31: quick "what am I wearing" panel for the right side. Shows
+ *  weapon + armor with emoji, name, plus level, and the stat bonus each
+ *  contributes. Empty slots get a "ไม่ได้สวม" placeholder so the player
+ *  knows the slot exists. */
+function EquippedPanel() {
+  const game = useGame(s => s.game)
+  const items = useGame(s => s.content!.items)
+  const setModal = useGame(s => s.setModal)
+  const wKey = game.equipWeapon
+  const aKey = game.equipArmor
+  const w = wKey ? items[wKey] : null
+  const a = aKey ? items[aKey] : null
+  const wPlus = wKey ? (game.plus[wKey + '_w'] || 0) : 0
+  const aPlus = aKey ? (game.plus[aKey + '_a'] || 0) : 0
+
+  return (
+    <div className="panel panel-pad">
+      <div className="panel-title flex justify-between items-center">
+        <span>🎽 ของที่สวม</span>
+        <button className="text-[10px] text-kw-blue-deep underline" onClick={() => setModal('inventory')}>
+          เปลี่ยน
+        </button>
+      </div>
+      <EquipSlot icon="⚔" label="อาวุธ" item={w} plus={wPlus} statKey="atk" plusMult={3} />
+      <EquipSlot icon="🛡" label="เกราะ" item={a} plus={aPlus} statKey="def" plusMult={2} />
+    </div>
+  )
+}
+
+function EquipSlot({
+  icon, label, item, plus, statKey, plusMult,
+}: {
+  icon: string
+  label: string
+  item: { name: string; emoji: string; atk?: number; def?: number; matk?: number } | null
+  plus: number
+  statKey: 'atk' | 'def'
+  plusMult: number
+}) {
+  if (!item) {
+    return (
+      <div className="flex items-center gap-2 mt-1 px-1.5 py-1 rounded bg-white/40 border border-dashed border-kw-border text-[11px] text-kw-text-dim">
+        <span className="text-base opacity-50">{icon}</span>
+        <span className="flex-1">{label}</span>
+        <span className="italic">ไม่ได้สวม</span>
+      </div>
+    )
+  }
+  const base = item[statKey] || 0
+  const plusBonus = plus * plusMult
+  const total = base + plusBonus
+  return (
+    <div className="flex items-center gap-2 mt-1 px-1.5 py-1 rounded bg-white border border-kw-border text-[11px]">
+      <span className="text-base">{item.emoji}</span>
+      <div className="flex-1 min-w-0">
+        <div className="font-bold text-kw-blue-deep truncate">
+          {item.name}
+          {plus > 0 && <span className="text-kw-red ml-1">+{plus}</span>}
+        </div>
+        <div className="text-[10px] text-kw-text-dim">
+          {statKey.toUpperCase()} +{total}
+          {plusBonus > 0 && <span className="text-kw-orange"> (+{plusBonus} จากบวก)</span>}
+        </div>
+      </div>
     </div>
   )
 }

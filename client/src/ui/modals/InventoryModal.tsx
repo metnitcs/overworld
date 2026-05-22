@@ -48,8 +48,56 @@ export function InventoryModal() {
   const equipped = sel && (sel === game.equipWeapon || sel === game.equipArmor)
   const selRarity: Rarity = selItem?.rarity ?? 'common'
 
+  // Slice 31: equipped quick summary at the top of the modal.
+  const wItem = game.equipWeapon ? items[game.equipWeapon] : null
+  const aItem = game.equipArmor ? items[game.equipArmor] : null
+  const wPlus = game.equipWeapon ? (game.plus[game.equipWeapon + '_w'] || 0) : 0
+  const aPlus = game.equipArmor ? (game.plus[game.equipArmor + '_a'] || 0) : 0
+
   return (
     <div className="flex flex-col gap-2">
+      {/* Slice 31: Equipped banner — always-visible "what am I wearing" */}
+      <div className="grid grid-cols-2 gap-2 px-1">
+        <div className="flex items-center gap-2 px-2 py-1.5 bg-white border-2 border-kw-border rounded text-[11px]">
+          <span className="text-xl">⚔</span>
+          {wItem ? (
+            <div className="flex-1 min-w-0">
+              <div className="font-bold text-kw-blue-deep truncate">
+                {wItem.emoji} {wItem.name}
+                {wPlus > 0 && <span className="text-kw-red ml-1">+{wPlus}</span>}
+              </div>
+              <div className="text-[10px] text-kw-text-dim">
+                ATK +{(wItem.atk || 0) + wPlus * 3}
+              </div>
+            </div>
+          ) : (
+            <span className="flex-1 italic text-kw-text-dim">ไม่ได้สวมอาวุธ</span>
+          )}
+          {wItem && (
+            <button className="btn btn-sm btn-ghost" onClick={() => unequip(game.equipWeapon!)}>ถอด</button>
+          )}
+        </div>
+        <div className="flex items-center gap-2 px-2 py-1.5 bg-white border-2 border-kw-border rounded text-[11px]">
+          <span className="text-xl">🛡</span>
+          {aItem ? (
+            <div className="flex-1 min-w-0">
+              <div className="font-bold text-kw-blue-deep truncate">
+                {aItem.emoji} {aItem.name}
+                {aPlus > 0 && <span className="text-kw-red ml-1">+{aPlus}</span>}
+              </div>
+              <div className="text-[10px] text-kw-text-dim">
+                DEF +{(aItem.def || 0) + aPlus * 2}
+              </div>
+            </div>
+          ) : (
+            <span className="flex-1 italic text-kw-text-dim">ไม่ได้สวมเกราะ</span>
+          )}
+          {aItem && (
+            <button className="btn btn-sm btn-ghost" onClick={() => unequip(game.equipArmor!)}>ถอด</button>
+          )}
+        </div>
+      </div>
+
       {/* Tabs */}
       <div className="flex gap-1 border-b-2 border-kw-orange">
         {TABS.map(t => (
