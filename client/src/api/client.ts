@@ -429,6 +429,19 @@ export const api = {
       method: 'POST', token, body: { recipeId },
     }),
 
+  /** Slice 43 — enhance an item. Server re-runs resolveEnhance with its
+   *  own RNG (player can't reroll). Response includes the resolved outcome
+   *  + the freshly-derived character. */
+  enhanceItem: (token: string, id: string, itemKey: string, slot: '_w' | '_a') =>
+    request<CharacterResponse & {
+      outcome: 'ok' | 'fail'
+      cost: number
+      stonesConsumed: number
+      newPlus: number
+    }>(`/api/character/${id}/enhance`, {
+      method: 'POST', token, body: { itemKey, slot },
+    }),
+
   // ─── Legacy first-char endpoints (kept until full removal) ───
   getCharacter: (token: string) =>
     request<CharacterResponse>('/api/character', { token }),

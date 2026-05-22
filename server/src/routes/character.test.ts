@@ -1128,6 +1128,88 @@ describe('POST /api/character/:id/craft', () => {
   })
 })
 
+// ─── Slice 43 — enhance intent endpoint ───────────────────────────────────
+describe('POST /api/character/:id/enhance', () => {
+  async function makeCharWithGearAndStones(token: string, name: string, stones = 20): Promise<string> {
+    const created = await app.inject({
+      method: 'POST', url: '/api/character', headers: { authorization: `Bearer ${token}` },
+      payload: { name },
+    })
+    const id = (created.json() as { character: { id: string } }).character.id
+    // Slot a weapon + plus-stones in inventory.
+    await prisma.inventoryItem.upsert({
+      where: { characterId_itemKey: { characterId: id, itemKey: 'sword-1' } },
+      create: { characterId: id, itemKey: 'sword-1', qty: 1 },
+      update: { qty: 1 },
+    })
+    await prisma.inventoryItem.upsert({
+      where: { characterId_itemKey: { characterId: id, itemKey: 'plus-stone' } },
+      create: { characterId: id, itemKey: 'plus-stone', qty: stones },
+      update: { qty: stones },
+    })
+    return id
+  }
+
+  it('consumes stones + reports an outcome (ok or fail) when the player has enough', async () => {
+    const token = await registerAndGetToken('test_enh_ok')
+    const id = await makeCharWithGearAndStones(token, 'E', 20)
+    const res = await app.inject({
+      method: 'POST', url: `/api/character/${id}/enhance`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { itemKey: 'sword-1', slot: '_w' },
+    })
+    expect(res.statusCode).toBe(200)
+    const body = res.json() as {
+      character: { inventory: Record<string, number>; plus: Record<string, number> }
+      outcome: 'ok' | 'fail'
+      stonesConsumed: number
+      newPlus: number
+    }
+    expect(['ok', 'fail']).toContain(body.outcome)
+    expect(body.stonesConsumed).toBeGreaterThanOrEqual(1)
+    expect(body.character.inventory['plus-stone']).toBe(20 - body.stonesConsumed)
+  })
+
+  it('rejects when the player has no plus-stones (409 no-stone)', async () => {
+    const token = await registerAndGetToken('test_enh_nostone')
+    const id = await makeCharWithGearAndStones(token, 'N', 0)
+    // Also delete the empty stone row so it's truly absent.
+    await prisma.inventoryItem.deleteMany({ where: { characterId: id, itemKey: 'plus-stone' } })
+    const res = await app.inject({
+      method: 'POST', url: `/api/character/${id}/enhance`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { itemKey: 'sword-1', slot: '_w' },
+    })
+    expect(res.statusCode).toBe(409)
+    expect((res.json() as { error: string }).error).toBe('no-stone')
+  })
+
+  it('rejects slot/type mismatch (400) — _w on armor', async () => {
+    const token = await registerAndGetToken('test_enh_slot_mismatch')
+    const id = await makeCharWithGearAndStones(token, 'S')
+    // Find any armor item.
+    const armor = await prisma.item.findFirstOrThrow({ where: { type: 'armor' } })
+    const res = await app.inject({
+      method: 'POST', url: `/api/character/${id}/enhance`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { itemKey: armor.id, slot: '_w' },
+    })
+    expect(res.statusCode).toBe(400)
+  })
+
+  it("returns 404 when enhancing on another user's character", async () => {
+    const tokenA = await registerAndGetToken('test_enh_a')
+    const id = await makeCharWithGearAndStones(tokenA, 'A')
+    const tokenB = await registerAndGetToken('test_enh_b')
+    const res = await app.inject({
+      method: 'POST', url: `/api/character/${id}/enhance`,
+      headers: { authorization: `Bearer ${tokenB}` },
+      payload: { itemKey: 'sword-1', slot: '_w' },
+    })
+    expect(res.statusCode).toBe(404)
+  })
+})
+
 describe('DELETE /api/character/:id (Slice 16 slot reclaim)', () => {
   it('removes the character so the slot can be reused', async () => {
     const token = await registerAndGetToken('test_del')

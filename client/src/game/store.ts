@@ -18,7 +18,7 @@ import type {
   CharClass,
 } from '@asura/shared'
 import {
-  deriveStats, applyExp, scaleEnemy, rollLoot, resolveEnhance, rollSpawns,
+  deriveStats, applyExp, scaleEnemy, rollLoot, rollSpawns,
   rollEncounter,
   findPath, type PathStep,
   TRANSCEND_LV, CLASS_CHANGE_LV, expForLv,
@@ -205,7 +205,7 @@ interface Store {
   healFull: (npcId: string) => Promise<void>
   // Craft / enhance / class change
   craft: (resultKey: string) => boolean
-  enhance: (key: string, slot: '_w' | '_a') => 'ok' | 'fail' | 'no-stone'
+  enhance: (key: string, slot: '_w' | '_a') => Promise<void>
   changeClass: (classId: string, cost: number) => boolean
   // Slice 23: primary-stat allocation
   allocateStat: (stat: 'str' | 'int' | 'dex' | 'agi' | 'luk' | 'vit', amount: number) => Promise<void>
@@ -1237,29 +1237,37 @@ export const useGame = create<Store>()(
         return true
       },
 
-      enhance: (key, slot) => {
-        const { game } = get()
-        const cur = game.plus[key + slot] || 0
-        const stones = game.inventory['plus-stone'] || 0
-        const r = resolveEnhance(cur, stones, Math.random)
-        if (r.outcome === 'no-stone') return 'no-stone'
-        get().removeItem('plus-stone', r.cost)
-        const g = { ...get().game, plus: { ...get().game.plus } }
-        g.plus[key + slot] = r.newPlus
-        if (r.outcome === 'ok') {
-          set({ game: deriveStats(g, { items: get().content?.items }) })
-          const name = get().content?.items[key]?.name ?? key
-          get().log(`✨ ตีบวก ${name} สำเร็จ! → +${r.newPlus}`, 'good')
-          return 'ok'
-        } else {
-          if (r.newPlus !== cur) {
-            set({ game: deriveStats(g, { items: get().content?.items }) })
-            get().log(`💥 ตีบวกล้มเหลว! ลดเหลือ +${r.newPlus}`, 'bad')
+      // Slice 43: enhance now resolves on the server (RNG, atomic stone
+      // spend + plus update). Outcome surfaces via chat log.
+      enhance: async (key, slot) => {
+        const token = get().token
+        const id = get().activeCharacterId
+        if (!token || !id) return
+        const name = get().content?.items[key]?.name ?? key
+        setSaveStatus('saving')
+        try {
+          const r = await api.enhanceItem(token, id, key, slot)
+          const { id: _, updatedAt, ...gameState } = r.character
+          void _
+          rememberSync(id, updatedAt)
+          const next = deriveStats(gameState, { items: get().content?.items })
+          useGame.setState({ game: next })
+          lastSavedSnapshot = snapshotOf(next)
+          setSaveStatus('saved')
+          if (r.outcome === 'ok') {
+            get().log(`✨ ตีบวก ${name} สำเร็จ! → +${r.newPlus}`, 'good')
           } else {
-            set({ game: g })
-            get().log(`💥 ตีบวกล้มเหลว!`, 'bad')
+            get().log(`💥 ตีบวกล้มเหลว! → +${r.newPlus}`, 'bad')
           }
-          return 'fail'
+        } catch (err) {
+          setSaveStatus('error')
+          if (err instanceof ApiError && err.body && typeof err.body === 'object'
+              && 'error' in err.body && (err.body as { error: string }).error === 'no-stone') {
+            get().log('💠 หินตีบวกไม่พอ', 'bad')
+          } else {
+            const msg = err instanceof Error ? err.message : String(err)
+            get().log(`ตีบวกไม่ได้: ${msg}`, 'bad')
+          }
         }
       },
 

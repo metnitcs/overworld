@@ -9,6 +9,7 @@ import {
   spendPoints, resetStats,
   applyRaceModifiers, shiftRaceModifierDiff,
   HEAL_FULL_COST,
+  resolveEnhance,
   type PrimaryStat,
 } from '@asura/shared'
 // Slice 28: race + class data lives in DB now (admin-editable). Server
@@ -114,6 +115,15 @@ const healFullSchema = z.object({
  *  (1 recipe per output, see Recipe model). */
 const craftSchema = z.object({
   recipeId: z.string().min(1),
+})
+
+/** Slice 43: enhance intent. `slot` is the suffix `_w` (weapon) or `_a`
+ *  (armor) appended to the item key to form the plus dict key
+ *  (e.g. `sword-1_w`). Server re-runs resolveEnhance with its own RNG so
+ *  the player can't reroll a failed attempt by replaying the request. */
+const enhanceSchema = z.object({
+  itemKey: z.string().min(1),
+  slot: z.enum(['_w', '_a']),
 })
 
 const DEFAULT_INVENTORY: Record<string, number> = { 'potion-s': 3 }
@@ -909,6 +919,87 @@ export function registerCharacterRoutes(app: FastifyInstance): void {
       })
     })
     return reply.send({ character: toApiCharacter(updated) })
+  })
+
+  // ─── POST /api/character/:id/enhance — Slice 43 intent endpoint ──────────
+  // Server re-runs the pure resolveEnhance with its own RNG (Math.random)
+  // — the client can't precompute the outcome or replay a failed roll.
+  // Returns the resolved outcome ('ok' | 'fail' | 'no-stone'), the
+  // stones spent, the new plus level, and the freshly-derived character.
+  app.post('/api/character/:id/enhance', { preHandler: app.requireAuth }, async (req, reply) => {
+    const parsed = enhanceSchema.safeParse(req.body)
+    if (!parsed.success) {
+      return reply.code(400).send({ error: 'invalid input', issues: parsed.error.issues })
+    }
+    const { id } = req.params as { id: string }
+    const { itemKey, slot } = parsed.data
+
+    const existing = await app.prisma.character.findUnique({
+      where: { id }, include: { inventory: true },
+    })
+    if (!existing || existing.userId !== req.userId) {
+      return reply.code(404).send({ error: 'character not found' })
+    }
+    const bundle = await app.contentCache.get()
+    const item = bundle.items[itemKey]
+    if (!item) return reply.code(404).send({ error: 'item not found' })
+    // Slot must match item type — _w only for weapons, _a only for armor.
+    if (slot === '_w' && item.type !== 'weapon') {
+      return reply.code(400).send({ error: 'slot _w requires a weapon' })
+    }
+    if (slot === '_a' && item.type !== 'armor') {
+      return reply.code(400).send({ error: 'slot _a requires armor' })
+    }
+    const plus = existing.plus as Record<string, number>
+    const cur = plus[itemKey + slot] ?? 0
+    const stones = existing.inventory.find((it) => it.itemKey === 'plus-stone')?.qty ?? 0
+
+    const result = resolveEnhance(cur, stones, Math.random)
+    if (result.outcome === 'no-stone') {
+      return reply.code(409).send({ error: 'no-stone', cost: result.cost })
+    }
+
+    const newPlus = { ...plus, [itemKey + slot]: result.newPlus }
+    // Re-derive stats so atk/def reflect the new plus level (the +
+    // formulas live in deriveStats with the items catalog).
+    const draft: GameState & { id: string } = {
+      ...toApiCharacter(existing),
+      plus: newPlus,
+    }
+    const next = deriveStats(draft, { items: bundle.items })
+
+    const updated = await app.prisma.$transaction(async (tx) => {
+      const newStoneQty = stones - result.stonesConsumed
+      if (newStoneQty <= 0) {
+        await tx.inventoryItem.deleteMany({
+          where: { characterId: existing.id, itemKey: 'plus-stone' },
+        })
+      } else {
+        await tx.inventoryItem.update({
+          where: { characterId_itemKey: { characterId: existing.id, itemKey: 'plus-stone' } },
+          data: { qty: newStoneQty },
+        })
+      }
+      await tx.character.update({
+        where: { id: existing.id },
+        data: {
+          plus: newPlus,
+          maxHp: next.maxHp, maxMp: next.maxMp,
+          hp: next.hp, mp: next.mp,
+          atk: next.atk, def: next.def, spd: next.spd,
+        },
+      })
+      return tx.character.findUniqueOrThrow({
+        where: { id: existing.id }, include: { inventory: true },
+      })
+    })
+    return reply.send({
+      character: toApiCharacter(updated),
+      outcome: result.outcome,
+      cost: result.cost,
+      stonesConsumed: result.stonesConsumed,
+      newPlus: result.newPlus,
+    })
   })
 
   // ─── DELETE /api/character/:id — delete a character (free a slot) ──────────
