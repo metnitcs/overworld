@@ -590,10 +590,10 @@ export function registerCharacterRoutes(app: FastifyInstance): void {
   })
 
   // ─── POST /api/character/:id/equip — Slice 39 intent endpoint ─────────────
-  // Server validates the item exists in content + lives in the player's
-  // inventory before pointing the slot at it. Re-runs deriveStats so the
-  // returned payload already reflects new atk/def. The item stays in the
-  // bag (Demon Online-style "equip is a pointer, not a transfer", Slice 36).
+  // Slice 46: Transfer model (CONTEXT.md "Equipment Slot"). Item moves
+  // Inventory → Slot — decrements (or deletes) the inventory row in the
+  // same transaction as the slot pointer flip. Matches Thai 2000s-era
+  // web MMORPG convention (Ragnarok / Mu / Yulgang).
   app.post('/api/character/:id/equip', { preHandler: app.requireAuth }, async (req, reply) => {
     const parsed = equipSchema.safeParse(req.body)
     if (!parsed.success) {
@@ -614,32 +614,81 @@ export function registerCharacterRoutes(app: FastifyInstance): void {
     if (item.type !== 'weapon' && item.type !== 'armor') {
       return reply.code(400).send({ error: 'item is not equippable' })
     }
-    const ownedQty = existing.inventory.find((it) => it.itemKey === itemKey)?.qty ?? 0
+    const row = existing.inventory.find((it) => it.itemKey === itemKey)
+    const ownedQty = row?.qty ?? 0
     if (ownedQty < 1) return reply.code(409).send({ error: 'item not in inventory' })
 
     const slotField = item.type === 'weapon' ? 'equipWeapon' : 'equipArmor'
+    // The previously-equipped item (if any) returns to inventory in the
+    // same transaction — keeps slot semantics symmetric with unequip.
+    const previouslyEquipped = item.type === 'weapon' ? existing.equipWeapon : existing.equipArmor
+
+    // Re-equipping the same item that's already in the slot is a no-op
+    // (semantically: the slot already holds it). Return current state
+    // without mutating inventory so we don't accidentally over-decrement.
+    if (previouslyEquipped === itemKey) {
+      return reply.send({ character: toApiCharacter(existing) })
+    }
+
+    // Build the post-mutation inventory dict for deriveStats. Transfer
+    // semantics: the equipped key leaves the bag; the displaced key
+    // (if any) returns to it.
+    const invMap: Record<string, number> = {}
+    for (const it of existing.inventory) invMap[it.itemKey] = it.qty
+    invMap[itemKey] = (invMap[itemKey] ?? 0) - 1
+    if (invMap[itemKey] <= 0) delete invMap[itemKey]
+    if (previouslyEquipped) {
+      invMap[previouslyEquipped] = (invMap[previouslyEquipped] ?? 0) + 1
+    }
+
     const draft: GameState & { id: string } = {
       ...toApiCharacter(existing),
       [slotField]: itemKey,
+      inventory: invMap,
     }
     const next = deriveStats(draft, { items: bundle.items })
-    const updated = await app.prisma.character.update({
-      where: { id: existing.id },
-      data: {
-        [slotField]: itemKey,
-        maxHp: next.maxHp, maxMp: next.maxMp,
-        hp: next.hp, mp: next.mp,
-        atk: next.atk, def: next.def, spd: next.spd,
-      },
-      include: { inventory: true },
+
+    const updated = await app.prisma.$transaction(async (tx) => {
+      // 1. Decrement (or delete) the to-be-equipped item from the bag.
+      if (ownedQty <= 1) {
+        await tx.inventoryItem.delete({
+          where: { characterId_itemKey: { characterId: existing.id, itemKey } },
+        })
+      } else {
+        await tx.inventoryItem.update({
+          where: { characterId_itemKey: { characterId: existing.id, itemKey } },
+          data: { qty: ownedQty - 1 },
+        })
+      }
+      // 2. Return the displaced item to the bag (if there was one).
+      //    Re-equip of same key was caught above and short-circuited.
+      if (previouslyEquipped) {
+        await tx.inventoryItem.upsert({
+          where: { characterId_itemKey: { characterId: existing.id, itemKey: previouslyEquipped } },
+          create: { characterId: existing.id, itemKey: previouslyEquipped, qty: 1 },
+          update: { qty: { increment: 1 } },
+        })
+      }
+      // 3. Flip the slot pointer + re-cache derived columns.
+      await tx.character.update({
+        where: { id: existing.id },
+        data: {
+          [slotField]: itemKey,
+          maxHp: next.maxHp, maxMp: next.maxMp,
+          hp: next.hp, mp: next.mp,
+          atk: next.atk, def: next.def, spd: next.spd,
+        },
+      })
+      return tx.character.findUniqueOrThrow({
+        where: { id: existing.id }, include: { inventory: true },
+      })
     })
     return reply.send({ character: toApiCharacter(updated) })
   })
 
   // ─── POST /api/character/:id/unequip — Slice 39 intent endpoint ───────────
-  // Clears the named slot. Safety net mirroring client Slice 33 logic:
-  // if the previously-equipped key has no inventory row (admin-assigned
-  // without a matching bag entry), add 1 so the item isn't lost on unequip.
+  // Slice 46: Transfer model. Clears the slot AND returns the item to
+  // the inventory (qty +1). If the slot is already empty, no-op.
   app.post('/api/character/:id/unequip', { preHandler: app.requireAuth }, async (req, reply) => {
     const parsed = unequipSchema.safeParse(req.body)
     if (!parsed.success) {
@@ -659,16 +708,18 @@ export function registerCharacterRoutes(app: FastifyInstance): void {
     if (cleared === null) {
       return reply.send({ character: toApiCharacter(existing) }) // no-op
     }
-    const ownedQty = existing.inventory.find((it) => it.itemKey === cleared)?.qty ?? 0
     const bundle = await app.contentCache.get()
+
+    // Build post-mutation inventory dict for deriveStats: the cleared
+    // item returns to the bag.
+    const invMap: Record<string, number> = {}
+    for (const it of existing.inventory) invMap[it.itemKey] = it.qty
+    invMap[cleared] = (invMap[cleared] ?? 0) + 1
+
     const draft: GameState & { id: string } = {
       ...toApiCharacter(existing),
       [slotField]: null,
-      // Safety: rebuild inventory dict for deriveStats with the safety
-      // top-up applied if needed.
-      inventory: ownedQty < 1
-        ? { ...Object.fromEntries(existing.inventory.map((it) => [it.itemKey, it.qty])), [cleared]: 1 }
-        : Object.fromEntries(existing.inventory.map((it) => [it.itemKey, it.qty])),
+      inventory: invMap,
     }
     const next = deriveStats(draft, { items: bundle.items })
 
@@ -682,13 +733,11 @@ export function registerCharacterRoutes(app: FastifyInstance): void {
           atk: next.atk, def: next.def, spd: next.spd,
         },
       })
-      if (ownedQty < 1) {
-        await tx.inventoryItem.upsert({
-          where: { characterId_itemKey: { characterId: existing.id, itemKey: cleared } },
-          create: { characterId: existing.id, itemKey: cleared, qty: 1 },
-          update: { qty: 1 },
-        })
-      }
+      await tx.inventoryItem.upsert({
+        where: { characterId_itemKey: { characterId: existing.id, itemKey: cleared } },
+        create: { characterId: existing.id, itemKey: cleared, qty: 1 },
+        update: { qty: { increment: 1 } },
+      })
       return tx.character.findUniqueOrThrow({
         where: { id: existing.id }, include: { inventory: true },
       })

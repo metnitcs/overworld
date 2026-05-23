@@ -60,6 +60,23 @@ Visual tier of an Item: `common` / `rare` / `epic` / `legendary`. Used only for 
 **NPC**:
 Non-player character placed at a coordinate on a Map. Has a kind: `shop` (sells ShopItems), `healer` (restores HP/MP for gold), `quest` (placeholder; not yet implemented).
 
+**Inventory**:
+The Character's bag of Items they currently hold but are not wearing. Stored as `InventoryItem` rows (one per (characterId, itemKey) pair with a qty). Items that are equipped are **not** in the Inventory — see Equipment Slot.
+_Avoid_: "bag" alone (ambiguous with UI elements), "items" alone.
+
+**Equipment Slot**:
+A named slot on the Character that holds at most one equipped Item: currently `equipWeapon` and `equipArmor`. **Transfer model**: when an Item is equipped, it moves from Inventory → Slot (and disappears from the Inventory list). When unequipped, it moves Slot → Inventory. A Slot never points to an Item that is also still in the Inventory.
+_Avoid_: "equip pointer" — that was the rejected Slice 36 model where the Item stayed in the bag while equipped.
+_History_: Slice 33 introduced Transfer. Slice 36 reverted to a Pointer model (Demon-Online style). Slice 46+ returns to Transfer because (a) Thai 2000s-era web MMORPG players expect it (Ragnarok/Mu/12Sky/Yulgang) and (b) the duplicated "still in bag while equipped" entry was a recurring source of player confusion.
+
+**Item Stat**:
+A field on an ItemDef that contributes to a Character's combat stats when the Item is equipped. Which stats fold in depends on the **slot the Item occupies**, not which fields the ItemDef carries:
+
+- A Weapon in `equipWeapon` contributes `atk` and `matk`.
+- An Armor in `equipArmor` contributes `def`.
+
+Item Stats that don't match the slot's contribution rule are ignored at runtime (e.g. an `atk` value set on an Armor has no effect). The admin form should not offer slots that the runtime rule will ignore.
+
 ## Input language
 
 **Click-to-Walk**:

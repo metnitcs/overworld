@@ -717,7 +717,7 @@ describe('POST /api/character/:id/equip', () => {
     return id
   }
 
-  it('equips a weapon the player owns and bumps derived atk', async () => {
+  it('equips a weapon — Transfer model: item leaves bag (Slice 46)', async () => {
     const token = await registerAndGetToken('test_equip_ok')
     const id = await createCharWithItem(token, 'Eq', 'sword-1')
     const before = await app.inject({
@@ -733,9 +733,60 @@ describe('POST /api/character/:id/equip', () => {
     expect(res.statusCode).toBe(200)
     const body = res.json() as { character: { equipWeapon: string | null; atk: number; inventory: Record<string, number> } }
     expect(body.character.equipWeapon).toBe('sword-1')
-    // Item is a pointer — still in bag (Slice 36 model).
-    expect(body.character.inventory['sword-1']).toBe(1)
+    // Slice 46: Transfer model — item moves Inventory → Slot.
+    expect(body.character.inventory['sword-1']).toBeUndefined()
     expect(body.character.atk).toBeGreaterThan(atkBefore)
+  })
+
+  it('equipping while another item is equipped — displaces it back to inventory (Slice 46)', async () => {
+    const token = await registerAndGetToken('test_equip_swap')
+    const id = await createCharWithItem(token, 'Sw', 'sword-1')
+    // Find a second weapon to swap to.
+    const otherWeapon = await prisma.item.findFirstOrThrow({
+      where: { type: 'weapon', id: { not: 'sword-1' } },
+    })
+    await prisma.inventoryItem.create({
+      data: { characterId: id, itemKey: otherWeapon.id, qty: 1 },
+    })
+
+    // First equip: sword-1.
+    await app.inject({
+      method: 'POST', url: `/api/character/${id}/equip`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { itemKey: 'sword-1' },
+    })
+    // Swap: equip the other weapon — sword-1 should return to inventory.
+    const res = await app.inject({
+      method: 'POST', url: `/api/character/${id}/equip`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { itemKey: otherWeapon.id },
+    })
+    expect(res.statusCode).toBe(200)
+    const body = res.json() as { character: { equipWeapon: string; inventory: Record<string, number> } }
+    expect(body.character.equipWeapon).toBe(otherWeapon.id)
+    expect(body.character.inventory[otherWeapon.id]).toBeUndefined()
+    expect(body.character.inventory['sword-1']).toBe(1)
+  })
+
+  it('equipping the same item already in the slot is a no-op', async () => {
+    const token = await registerAndGetToken('test_equip_same')
+    const id = await createCharWithItem(token, 'Sa', 'sword-1', 2)
+    await app.inject({
+      method: 'POST', url: `/api/character/${id}/equip`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { itemKey: 'sword-1' },
+    })
+    // Slot now holds sword-1; bag has 1 left. Re-equipping is a no-op —
+    // no over-decrement, slot unchanged, bag unchanged.
+    const res = await app.inject({
+      method: 'POST', url: `/api/character/${id}/equip`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { itemKey: 'sword-1' },
+    })
+    expect(res.statusCode).toBe(200)
+    const body = res.json() as { character: { equipWeapon: string | null; inventory: Record<string, number> } }
+    expect(body.character.equipWeapon).toBe('sword-1')
+    expect(body.character.inventory['sword-1']).toBe(1)
   })
 
   it('rejects equipping an item the player does not own (409)', async () => {
@@ -778,7 +829,7 @@ describe('POST /api/character/:id/equip', () => {
 })
 
 describe('POST /api/character/:id/unequip', () => {
-  it('clears the requested slot and item stays in inventory', async () => {
+  it('clears the slot and returns the item to inventory (Slice 46 Transfer model)', async () => {
     const token = await registerAndGetToken('test_unequip_ok')
     const created = await app.inject({
       method: 'POST', url: '/api/character', headers: { authorization: `Bearer ${token}` },
@@ -786,11 +837,13 @@ describe('POST /api/character/:id/unequip', () => {
     })
     const id = (created.json() as { character: { id: string } }).character.id
     await prisma.inventoryItem.create({ data: { characterId: id, itemKey: 'sword-1', qty: 1 } })
+    // Equip moves Inventory → Slot (qty in bag = 0).
     await app.inject({
       method: 'POST', url: `/api/character/${id}/equip`,
       headers: { authorization: `Bearer ${token}` },
       payload: { itemKey: 'sword-1' },
     })
+    // Unequip moves Slot → Inventory (qty in bag = 1 again).
     const res = await app.inject({
       method: 'POST', url: `/api/character/${id}/unequip`,
       headers: { authorization: `Bearer ${token}` },
@@ -799,10 +852,10 @@ describe('POST /api/character/:id/unequip', () => {
     expect(res.statusCode).toBe(200)
     const body = res.json() as { character: { equipWeapon: string | null; inventory: Record<string, number> } }
     expect(body.character.equipWeapon).toBeNull()
-    expect(body.character.inventory['sword-1']).toBe(1) // pointer cleared, item kept
+    expect(body.character.inventory['sword-1']).toBe(1)
   })
 
-  it('safety: unequipping an admin-assigned slot without inventory row re-adds 1', async () => {
+  it('admin-assigned slot without inventory row — unequip seeds qty=1 in bag (Slice 46)', async () => {
     const token = await registerAndGetToken('test_unequip_safety')
     const created = await app.inject({
       method: 'POST', url: '/api/character', headers: { authorization: `Bearer ${token}` },
@@ -823,7 +876,10 @@ describe('POST /api/character/:id/unequip', () => {
     expect(res.statusCode).toBe(200)
     const body = res.json() as { character: { equipWeapon: string | null; inventory: Record<string, number> } }
     expect(body.character.equipWeapon).toBeNull()
-    expect(body.character.inventory['sword-1']).toBe(1) // safety top-up
+    // Under Transfer model this is just the normal flow — slot empties,
+    // item enters bag. The "safety" branch (Slice 39 Pointer-era) is now
+    // the standard path.
+    expect(body.character.inventory['sword-1']).toBe(1)
   })
 
   it('no-op when the slot is already empty', async () => {

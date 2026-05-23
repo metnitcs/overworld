@@ -30,6 +30,21 @@ export function AdminScreen() {
   const role = useGame((s) => s.role)
   const username = useGame((s) => s.username)
   const setScreen = useGame((s) => s.setScreen)
+  const loadContent = useGame((s) => s.loadContent)
+  const reloadActiveCharacter = useGame((s) => s.reloadActiveCharacter)
+
+  // Slice 46: when leaving admin, refresh the Content cache + the active
+  // character so any item/map/character edit the admin just made shows
+  // up immediately in the game UI — without forcing a browser refresh
+  // or waiting for the autosave's 409 round-trip to merge it in.
+  async function backToGame() {
+    try {
+      await Promise.all([loadContent(), reloadActiveCharacter()])
+    } catch (e) {
+      console.error('[admin] back-to-game refresh failed', e)
+    }
+    setScreen('character-select')
+  }
   // Slice 34: remember the last-visited admin tab across refreshes so a
   // reload doesn't always drop the user back on Items. localStorage is
   // enough — the tab is purely UI state, not server-relevant.
@@ -81,7 +96,7 @@ export function AdminScreen() {
             <span>👤 {username ?? 'unknown'}</span>
             <span className="role-pill">ADMIN</span>
           </span>
-          <button className="btn-ghost-light" onClick={() => setScreen('character-select')}>
+          <button className="btn-ghost-light" onClick={() => void backToGame()}>
             ← กลับเกม
           </button>
         </div>
@@ -416,20 +431,31 @@ function ItemForm({ mode, initial, onSubmit, onCancel }: {
   }
   function submit(e: React.FormEvent) {
     e.preventDefault()
+    // Slice 46: only send stat fields that are valid for this item type
+    // (see showStats below). Filters out stale values that linger in
+    // form state when the admin changes type — e.g. flipping weapon →
+    // armor leaves the old `atk` value sitting in state.
     const body: AdminItemBody & { id?: string } = {
       name, emoji, type, rarity,
-      atk: num(atk), def: num(def), matk: num(matk), heal: num(heal), healMp: num(healMp),
+      atk:    type === 'weapon'  ? num(atk)    : null,
+      def:    type === 'armor'   ? num(def)    : null,
+      matk:   type === 'weapon'  ? num(matk)   : null,
+      heal:   type === 'consume' ? num(heal)   : null,
+      healMp: type === 'consume' ? num(healMp) : null,
       desc,
     }
     if (mode === 'create') body.id = id.trim()
     onSubmit(body)
   }
 
-  // Which stat fields make sense per item type. Keeps the form focused —
-  // no point asking for HEAL on a sword.
+  // Which stat fields make sense per item type — see CONTEXT.md "Item Stat".
+  // Slice 46: tightened so the form only offers fields that deriveStats
+  // actually reads for the matching equip slot. Weapons contribute atk /
+  // matk; armors contribute def. Cross-stat values (atk on armor, def
+  // on weapon) were silently ignored at runtime — confusing for admins.
   const showStats = {
-    atk:    type === 'weapon' || type === 'armor',
-    def:    type === 'armor'  || type === 'weapon',
+    atk:    type === 'weapon',
+    def:    type === 'armor',
     matk:   type === 'weapon',
     heal:   type === 'consume',
     healMp: type === 'consume',
