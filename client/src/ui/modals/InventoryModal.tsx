@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useGame } from '../../game/store'
-import type { ItemType, Rarity } from '@asura/shared'
+import type { Rarity } from '@asura/shared'
 
 type Tab = 'all' | 'equip' | 'consume' | 'mat'
 
@@ -13,7 +13,6 @@ const TABS: { id: Tab; label: string; icon: string }[] = [
 
 const TOTAL_SLOTS = 32
 
-/** Border colour by rarity — small visual cue per ADR 0002 (display-only). */
 const RARITY_BORDER: Record<Rarity, string> = {
   common:    'border-kw-border',
   rare:      'border-blue-400',
@@ -27,36 +26,52 @@ const RARITY_LABEL: Record<Rarity, string> = {
   legendary: 'เทพ',
 }
 
+// Slice 47: gear is per-instance and stacks with the same itemKey may have
+// different Plus levels. Sort within a tab: itemKey group, then plus DESC.
+function sortInvForDisplay<T extends { itemKey: string; plus: number }>(rows: T[]): T[] {
+  return [...rows].sort((a, b) => {
+    if (a.itemKey !== b.itemKey) return a.itemKey.localeCompare(b.itemKey)
+    return b.plus - a.plus
+  })
+}
+
 export function InventoryModal() {
   const game = useGame(s => s.game)
-  const items = useGame(s => s.content!.items)   // content gate in App.tsx guarantees non-null
+  const items = useGame(s => s.content!.items)
   const equip = useGame(s => s.equip)
   const unequip = useGame(s => s.unequip)
   const useConsume = useGame(s => s.useConsume)
   const [tab, setTab] = useState<Tab>('all')
-  const [selected, setSelected] = useState<string | null>(null)
+  // Slice 47: selection is per-instance — track the InventoryItem.id.
+  const [selectedId, setSelectedId] = useState<string | null>(null)
 
-  const allKeys = Object.keys(game.inventory).filter(k => game.inventory[k] > 0)
-  let visibleKeys = allKeys
-  if (tab === 'equip')   visibleKeys = allKeys.filter(k => ['weapon', 'armor'].includes(items[k]?.type as ItemType))
-  if (tab === 'consume') visibleKeys = allKeys.filter(k => items[k]?.type === 'consume')
-  if (tab === 'mat')     visibleKeys = allKeys.filter(k => items[k]?.type === 'mat')
+  // Slice 47: bag list filters out the rows currently in equip slots so
+  // the player never sees the equipped item twice (Transfer model, logical).
+  const bagRows = game.inventory.filter(
+    (r) => r.id !== game.equipWeapon && r.id !== game.equipArmor,
+  )
+  let visibleRows = bagRows
+  if (tab === 'equip')   visibleRows = bagRows.filter((r) => ['weapon', 'armor'].includes(items[r.itemKey]?.type ?? ''))
+  if (tab === 'consume') visibleRows = bagRows.filter((r) => items[r.itemKey]?.type === 'consume')
+  if (tab === 'mat')     visibleRows = bagRows.filter((r) => items[r.itemKey]?.type === 'mat')
+  visibleRows = sortInvForDisplay(visibleRows)
 
-  const sel = selected && items[selected] ? selected : null
-  const selItem = sel ? items[sel] : null
-  const selPlus = sel ? (game.plus[sel + '_w'] || game.plus[sel + '_a'] || 0) : 0
-  const equipped = sel && (sel === game.equipWeapon || sel === game.equipArmor)
+  const sel = selectedId ? game.inventory.find((r) => r.id === selectedId) : null
+  const selItem = sel ? items[sel.itemKey] : null
+  const selPlus = sel?.plus ?? 0
+  const equipped = sel ? (sel.id === game.equipWeapon || sel.id === game.equipArmor) : false
   const selRarity: Rarity = selItem?.rarity ?? 'common'
 
-  // Slice 31: equipped quick summary at the top of the modal.
-  const wItem = game.equipWeapon ? items[game.equipWeapon] : null
-  const aItem = game.equipArmor ? items[game.equipArmor] : null
-  const wPlus = game.equipWeapon ? (game.plus[game.equipWeapon + '_w'] || 0) : 0
-  const aPlus = game.equipArmor ? (game.plus[game.equipArmor + '_a'] || 0) : 0
+  const weaponRow = game.equipWeapon ? game.inventory.find((r) => r.id === game.equipWeapon) : null
+  const armorRow  = game.equipArmor  ? game.inventory.find((r) => r.id === game.equipArmor)  : null
+  const wItem = weaponRow ? items[weaponRow.itemKey] : null
+  const aItem = armorRow  ? items[armorRow.itemKey]  : null
+  const wPlus = weaponRow?.plus ?? 0
+  const aPlus = armorRow?.plus  ?? 0
 
   return (
     <div className="flex flex-col gap-2">
-      {/* Slice 31: Equipped banner — always-visible "what am I wearing" */}
+      {/* Equipped banner */}
       <div className="grid grid-cols-2 gap-2 px-1">
         <div className="flex items-center gap-2 px-2 py-1.5 bg-white border-2 border-kw-border rounded text-[11px]">
           <span className="text-xl">⚔</span>
@@ -74,7 +89,7 @@ export function InventoryModal() {
             <span className="flex-1 italic text-kw-text-dim">ไม่ได้สวมอาวุธ</span>
           )}
           {wItem && (
-            <button className="btn btn-sm btn-ghost" onClick={() => unequip(game.equipWeapon!)}>ถอด</button>
+            <button className="btn btn-sm btn-ghost" onClick={() => unequip('weapon')}>ถอด</button>
           )}
         </div>
         <div className="flex items-center gap-2 px-2 py-1.5 bg-white border-2 border-kw-border rounded text-[11px]">
@@ -93,7 +108,7 @@ export function InventoryModal() {
             <span className="flex-1 italic text-kw-text-dim">ไม่ได้สวมเกราะ</span>
           )}
           {aItem && (
-            <button className="btn btn-sm btn-ghost" onClick={() => unequip(game.equipArmor!)}>ถอด</button>
+            <button className="btn btn-sm btn-ghost" onClick={() => unequip('armor')}>ถอด</button>
           )}
         </div>
       </div>
@@ -111,27 +126,24 @@ export function InventoryModal() {
         ))}
       </div>
 
-      {/* Slot grid */}
+      {/* Slot grid — Slice 47: one slot per InventoryItem row */}
       <div className="bg-white border-2 border-kw-border rounded p-2">
         <div className="grid grid-cols-8 gap-1.5">
-          {Array.from({ length: Math.max(TOTAL_SLOTS, visibleKeys.length) }).map((_, i) => {
-            const key = visibleKeys[i]
-            if (!key) return <div key={i} className="inv-slot empty" />
-            const it = items[key]
+          {Array.from({ length: Math.max(TOTAL_SLOTS, visibleRows.length) }).map((_, i) => {
+            const row = visibleRows[i]
+            if (!row) return <div key={i} className="inv-slot empty" />
+            const it = items[row.itemKey]
             if (!it) return <div key={i} className="inv-slot empty" />
-            const qty = game.inventory[key]
-            const isEquipped = key === game.equipWeapon || key === game.equipArmor
-            const plus = game.plus[key + '_w'] || game.plus[key + '_a'] || 0
             const rarityBorder = RARITY_BORDER[it.rarity ?? 'common']
             return (
               <div
-                key={i}
-                className={`inv-slot ${rarityBorder} ${isEquipped ? 'equipped' : ''} ${selected === key ? '!border-kw-orange ring-2 ring-kw-orange/40' : ''}`}
-                onClick={() => setSelected(key)}
+                key={row.id}
+                className={`inv-slot ${rarityBorder} ${selectedId === row.id ? '!border-kw-orange ring-2 ring-kw-orange/40' : ''}`}
+                onClick={() => setSelectedId(row.id)}
               >
                 {it.emoji}
-                {qty > 1 && <span className="qty">{qty}</span>}
-                {plus > 0 && <span className="plus">+{plus}</span>}
+                {row.qty > 1 && <span className="qty">{row.qty}</span>}
+                {row.plus > 0 && <span className="plus">+{row.plus}</span>}
               </div>
             )
           })}
@@ -140,7 +152,7 @@ export function InventoryModal() {
 
       {/* Detail panel */}
       <div className="panel panel-pad min-h-[80px]">
-        {selItem ? (
+        {sel && selItem ? (
           <div className="flex gap-3 items-start">
             <div className="text-4xl">{selItem.emoji}</div>
             <div className="flex-1">
@@ -159,19 +171,22 @@ export function InventoryModal() {
                 {selItem.heal && `ฟื้น ${selItem.heal} HP `}
                 {selItem.healMp && `ฟื้น ${selItem.healMp} MP `}
               </div>
-              <div className="text-xs mt-1 text-kw-text-dim">มี {game.inventory[sel!]} ชิ้น</div>
+              <div className="text-xs mt-1 text-kw-text-dim">มี {sel.qty} ชิ้น</div>
             </div>
             <div className="flex flex-col gap-1">
               {selItem.type === 'consume' && (
-                <button className="btn btn-sm btn-green" onClick={() => useConsume(sel!)}>
+                <button className="btn btn-sm btn-green" onClick={() => useConsume(sel.itemKey)}>
                   ใช้
                 </button>
               )}
               {(selItem.type === 'weapon' || selItem.type === 'armor') && !equipped && (
-                <button className="btn btn-sm" onClick={() => equip(sel!)}>สวม</button>
+                <button className="btn btn-sm" onClick={() => equip(sel.id)}>สวม</button>
               )}
               {(selItem.type === 'weapon' || selItem.type === 'armor') && equipped && (
-                <button className="btn btn-sm btn-ghost" onClick={() => unequip(sel!)}>ถอด</button>
+                <button className="btn btn-sm btn-ghost"
+                  onClick={() => unequip(selItem.type === 'weapon' ? 'weapon' : 'armor')}>
+                  ถอด
+                </button>
               )}
             </div>
           </div>
@@ -183,7 +198,7 @@ export function InventoryModal() {
       </div>
 
       <div className="flex justify-between text-xs text-kw-text-dim px-1">
-        <span>จำนวนไอเท็ม {visibleKeys.length} ชิ้น</span>
+        <span>จำนวนไอเท็ม {visibleRows.length} ชิ้น</span>
         <span>จำนวนเงิน <span className="text-kw-orange font-bold">{game.gold.toLocaleString()}</span> พีซ</span>
       </div>
     </div>

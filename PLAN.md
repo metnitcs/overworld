@@ -285,7 +285,46 @@ POST   /api/save              (debug, force flush)
 - ลบ persist middleware ออก (server เก็บแล้ว)
 - เพิ่มหน้า login/register
 
-### Phase 3 — Multiplayer (2-3 สัปดาห์)
+### Phase 2 — Slice 47-49 (per-instance gear + Blacksmith)
+
+ที่มา: grilling session 2026-05-23. ปัญหาราก: inventory stack ตาม `(characterId, itemKey)` + Plus เก็บที่ `Character.plus[itemKey+slot]` → ดาบ 2 เล่ม +ต่างกันไม่ได้, admin ตี+ ผ่าน JSON blob แล้ว `atk/def` ไม่ขยับ. รายละเอียดสถาปัตยกรรม + รากเหตุผล: [ADR 0003](./docs/adr/0003-per-instance-identity-for-gear-inventory.md). คำศัพท์ใหม่ (Inventory Item, Plus, Enhance, Blacksmith): [CONTEXT.md](./CONTEXT.md)
+
+#### Slice 47 — Per-instance gear core
+
+- Prisma migration (destructive, reseed): drop `(characterId, itemKey)` unique, add `InventoryItem.id` PK + `plus Int @default(0)`, drop `Character.plus` JSON, change `Character.equipWeapon/equipArmor` → FK to `InventoryItem.id` (ON DELETE SET NULL)
+- Server helpers: `addItem(itemKey, qty)` รู้ stack policy จาก ItemType (weapon/armor INSERT แถวใหม่ qty=1, mat/consume bump existing)
+- Intent endpoints: `POST /equip` และ `POST /enhance` body เปลี่ยนจาก `{itemKey, slot}` → `{inventoryItemId}` (slot derive จาก `ItemDef.type`). Battle drop / shop buy / craft result: weapon/armor → INSERT แถวใหม่
+- Client store: `game.inventory` เปลี่ยน shape จาก `Record<itemKey, qty>` → `InventoryItem[]` (มี id, itemKey, qty, plus). API client + every reader update
+- InventoryModal: render แยก row ต่อ weapon/armor instance, badge `+N` มุมบนซ้าย (เฉพาะ N>0), group by itemKey ก่อน sort by plus DESC, mat/consume คงเดิม. EnhanceModal เดิมยังเปิดจาก HUD แต่ operate ด้วย id
+
+#### Slice 48 — Blacksmith NPC + ceremony ✅ shipped 2026-05-23
+
+ดู [vault/wiki/slices/slice-48-blacksmith-ceremony.md](vault/wiki/slices/slice-48-blacksmith-ceremony.md) สำหรับรายละเอียดเต็ม
+
+- ✓ `NpcKind = 'blacksmith'` (migration `20260523120000_slice_48_blacksmith_npc_kind`)
+- ✓ Seed: `village-blacksmith` ที่ (6,3) ใน village, emoji 🛠️
+- ✓ BlacksmithModal เปิดจาก tile interaction; list unequipped weapon/armor; แสดง `+N / 💠 cost / 💰 cost / success%`
+- ✓ Gold fee: `enhanceGoldCost(cur) = 100 * (cur + 1)` (pure helper ใน shared/logic/enhance.ts)
+- ✓ POST /enhance: รับ `npcId`, reject equipped (409 'item is equipped'), reject NPC ผิด kind/map (404), หัก gold+stone atomic
+- ✓ HUD enhance button ลบแล้ว; `EnhanceModal.tsx` ลบทิ้ง; ModalType `enhance` → `blacksmith`
+- ✓ Tests: shared 78/78, server 125/125 (+4 slice 48 cases)
+
+#### Slice 49 — Admin Set-Plus + re-derive bug fix ✅ shipped 2026-05-23
+
+ดู [vault/wiki/slices/slice-49-admin-set-plus.md](vault/wiki/slices/slice-49-admin-set-plus.md) สำหรับรายละเอียดเต็ม
+
+- ✓ `POST /api/admin/inventory/:itemId/set-plus` body `{plus: 0..10}` — atomic update + re-derive owner + audit `inventory.set-plus`
+- ✓ AdminCharEditor: ลบ JSON textareas, มี `CharacterInventoryEditor` table พร้อม per-row Plus `<select>` 0..10 (เฉพาะ weapon/armor)
+- ✓ Admin PUT `/api/admin/characters/:id`: re-derive defense-in-depth เมื่อ str/int/dex/agi/luk/vit/lv/raceId/classId เปลี่ยน
+- ✓ Tests: shared 78/78 (unchanged); server 131/131 (+6 slice 49: 5 set-plus + 1 re-derive defense)
+
+**Bug "admin ตี+ ไม่เห็นเปลี่ยน" ตายตามขั้นตอน Slice 47-49 รวมกัน** — เหลือเพียง 2 write paths (Blacksmith intent / admin Set-Plus intent) ทั้งคู่ re-derive ใน $transaction
+
+**Add Item flow ยังไม่ทำ** — queued เป็น "Admin Inventory v2" (slice ใหม่ภายหลัง)
+
+ตัดสินใจที่ยังไม่เคาะ: gold fee scaling formula ตัวจริง (ตอนนี้ใช้ `100 * (cur+1)` — ต้อง playtest), placement ของ blacksmith NPC เพิ่มเติมในเมืองอื่น
+
+
 
 เป้าหมาย: เห็นผู้เล่นคนอื่นเดินบนแมพ + chat realtime
 

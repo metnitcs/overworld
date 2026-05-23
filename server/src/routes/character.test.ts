@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
-import { PrismaClient } from '@prisma/client'
+import { Prisma, PrismaClient } from '@prisma/client'
 import { buildServer } from '../app.js'
 import { STARTER_RACE, CHARACTER_SLOT_LIMIT, TRANSCEND_LV } from '@asura/shared'
 
@@ -58,7 +58,7 @@ describe('POST /api/character', () => {
     })
 
     expect(res.statusCode).toBe(201)
-    const body = res.json() as { character: Record<string, unknown> }
+    const body = res.json() as { character: { inventory: Array<{ itemKey: string; qty: number }> } & Record<string, unknown> }
     expect(body.character).toMatchObject({
       name: 'Alice',
       raceId: STARTER_RACE.id,        // = 'human'
@@ -69,7 +69,8 @@ describe('POST /api/character', () => {
       transcended: false,
       classChanged: false,
     })
-    expect(body.character).toMatchObject({ inventory: { 'potion-s': 3 } })
+    expect(body.character.inventory).toHaveLength(1)
+    expect(body.character.inventory[0]).toMatchObject({ itemKey: 'potion-s', qty: 3 })
   })
 })
 
@@ -91,12 +92,13 @@ describe('GET /api/character (legacy first-char endpoint)', () => {
 
     expect(res.statusCode).toBe(200)
     const body = res.json() as {
-      character: { name: string; raceId: string; transcended: boolean; inventory: Record<string, number> }
+      character: { name: string; raceId: string; transcended: boolean; inventory: { itemKey: string; qty: number }[] }
     }
     expect(body.character.name).toBe('Bob')
     expect(body.character.raceId).toBe(STARTER_RACE.id)
     expect(body.character.transcended).toBe(false)
-    expect(body.character.inventory).toEqual({ 'potion-s': 3 })
+    expect(body.character.inventory).toHaveLength(1)
+    expect(body.character.inventory[0]).toMatchObject({ itemKey: 'potion-s', qty: 3 })
   })
 
   it('returns 404 when the authenticated user has no character yet', async () => {
@@ -247,6 +249,7 @@ describe('PUT /api/character/:id (Slice 16 by-id save)', () => {
   // Slice 45: the headline test for "GM-add-item no longer disappears".
   // Player PUT used to wipe + recreate the inventory; now it leaves it
   // alone. Admin-added items survive the next autosave.
+  // Slice 47: rewritten for per-instance gear (Plus on row, equip is FK).
   it('does NOT touch inventory / gold / equip / plus (Slice 45)', async () => {
     const token = await registerAndGetToken('test_no_touch_inv')
     const created = await app.inject({
@@ -255,13 +258,13 @@ describe('PUT /api/character/:id (Slice 16 by-id save)', () => {
     })
     const id = (created.json() as { character: { id: string } }).character.id
 
-    // Simulate admin write: add an item + bump gold + set equip + plus.
-    await prisma.inventoryItem.create({
-      data: { characterId: id, itemKey: 'sword-1', qty: 1 },
+    // Simulate admin write: add a weapon row at +5, bump gold, equip it.
+    const sword = await prisma.inventoryItem.create({
+      data: { characterId: id, itemKey: 'sword-1', qty: 1, plus: 5 },
     })
     await prisma.character.update({
       where: { id },
-      data: { gold: 9999, equipWeapon: 'sword-1', plus: { 'sword-1_w': 5 } },
+      data: { gold: 9999, equipWeaponId: sword.id },
     })
 
     // Player PUT only carries position/stats/lv/exp/hp/mp now.
@@ -274,18 +277,18 @@ describe('PUT /api/character/:id (Slice 16 by-id save)', () => {
     const body = res.json() as {
       character: {
         gold: number
-        inventory: Record<string, number>
+        inventory: { id: string; itemKey: string; qty: number; plus: number }[]
         equipWeapon: string | null
-        plus: Record<string, number>
         lv: number
         steps: number
       }
     }
-    // Inventory + gold + equip + plus survived the player PUT.
+    // Inventory + gold + equip survived the player PUT.
     expect(body.character.gold).toBe(9999)
-    expect(body.character.inventory['sword-1']).toBe(1)
-    expect(body.character.equipWeapon).toBe('sword-1')
-    expect(body.character.plus).toEqual({ 'sword-1_w': 5 })
+    const row = body.character.inventory.find((it) => it.itemKey === 'sword-1')
+    expect(row).toBeDefined()
+    expect(row!.plus).toBe(5)
+    expect(body.character.equipWeapon).toBe(sword.id)
     // ...and the allowed fields did write through.
     expect(body.character.lv).toBe(2)
     expect(body.character.steps).toBe(50)
@@ -339,11 +342,12 @@ describe('PUT /api/character/:id (Slice 16 by-id save)', () => {
       payload: fullSaveBody({ expectedUpdatedAt: c0.updatedAt }),
     })
     expect(res.statusCode).toBe(409)
-    const body = res.json() as { error: string; character: { gold: number; inventory: Record<string, number>; updatedAt: string } }
+    const body = res.json() as { error: string; character: { gold: number; inventory: { itemKey: string; qty: number }[]; updatedAt: string } }
     expect(body.error).toBe('stale')
     // Server hands back the *current* state so the client can merge + retry.
     expect(body.character.gold).toBe(999)
-    expect(body.character.inventory).toEqual({ 'potion-s': 3, 'sword-1': 1 })
+    const keys = body.character.inventory.map((it) => it.itemKey).sort()
+    expect(keys).toEqual(['potion-s', 'sword-1'])
     expect(body.character.updatedAt).not.toBe(c0.updatedAt)
   })
 
@@ -701,25 +705,26 @@ describe('POST /api/character/:id/reset-stats (Slice 23 reset)', () => {
   })
 })
 
-// ─── Slice 39 — equip/unequip intent endpoints ────────────────────────────
+// ─── Slice 39 — equip/unequip intent endpoints (Slice 47: per-instance) ──
 describe('POST /api/character/:id/equip', () => {
-  async function createCharWithItem(token: string, name: string, itemKey: string, qty = 1): Promise<string> {
+  // Slice 47: creates the character and a fresh InventoryItem row for the
+  // given itemKey; returns both ids so tests can address the row by id
+  // (per-instance gear = no (charId,itemKey) shortcut anymore).
+  async function createCharWithItem(token: string, name: string, itemKey: string): Promise<{ id: string; itemId: string }> {
     const created = await app.inject({
       method: 'POST', url: '/api/character', headers: { authorization: `Bearer ${token}` },
       payload: { name },
     })
     const id = (created.json() as { character: { id: string } }).character.id
-    await prisma.inventoryItem.upsert({
-      where: { characterId_itemKey: { characterId: id, itemKey } },
-      create: { characterId: id, itemKey, qty },
-      update: { qty },
+    const row = await prisma.inventoryItem.create({
+      data: { characterId: id, itemKey, qty: 1 },
     })
-    return id
+    return { id, itemId: row.id }
   }
 
-  it('equips a weapon — Transfer model: item leaves bag (Slice 46)', async () => {
+  it('equips a weapon — FK flip; ATK rises from deriveStats', async () => {
     const token = await registerAndGetToken('test_equip_ok')
-    const id = await createCharWithItem(token, 'Eq', 'sword-1')
+    const { id, itemId } = await createCharWithItem(token, 'Eq', 'sword-1')
     const before = await app.inject({
       method: 'GET', url: `/api/character/${id}`, headers: { authorization: `Bearer ${token}` },
     })
@@ -728,68 +733,62 @@ describe('POST /api/character/:id/equip', () => {
     const res = await app.inject({
       method: 'POST', url: `/api/character/${id}/equip`,
       headers: { authorization: `Bearer ${token}` },
-      payload: { itemKey: 'sword-1' },
+      payload: { inventoryItemId: itemId },
     })
     expect(res.statusCode).toBe(200)
-    const body = res.json() as { character: { equipWeapon: string | null; atk: number; inventory: Record<string, number> } }
-    expect(body.character.equipWeapon).toBe('sword-1')
-    // Slice 46: Transfer model — item moves Inventory → Slot.
-    expect(body.character.inventory['sword-1']).toBeUndefined()
+    const body = res.json() as { character: { equipWeapon: string | null; atk: number; inventory: { id: string }[] } }
+    expect(body.character.equipWeapon).toBe(itemId)
+    // Slice 47: row stays in inventory; UI filters by FK match.
+    expect(body.character.inventory.some((it) => it.id === itemId)).toBe(true)
     expect(body.character.atk).toBeGreaterThan(atkBefore)
   })
 
-  it('equipping while another item is equipped — displaces it back to inventory (Slice 46)', async () => {
+  it('equipping while another item is equipped — swaps which row the FK points at', async () => {
     const token = await registerAndGetToken('test_equip_swap')
-    const id = await createCharWithItem(token, 'Sw', 'sword-1')
-    // Find a second weapon to swap to.
+    const { id, itemId: swordId } = await createCharWithItem(token, 'Sw', 'sword-1')
     const otherWeapon = await prisma.item.findFirstOrThrow({
       where: { type: 'weapon', id: { not: 'sword-1' } },
     })
-    await prisma.inventoryItem.create({
+    const otherRow = await prisma.inventoryItem.create({
       data: { characterId: id, itemKey: otherWeapon.id, qty: 1 },
     })
 
-    // First equip: sword-1.
     await app.inject({
       method: 'POST', url: `/api/character/${id}/equip`,
       headers: { authorization: `Bearer ${token}` },
-      payload: { itemKey: 'sword-1' },
+      payload: { inventoryItemId: swordId },
     })
-    // Swap: equip the other weapon — sword-1 should return to inventory.
     const res = await app.inject({
       method: 'POST', url: `/api/character/${id}/equip`,
       headers: { authorization: `Bearer ${token}` },
-      payload: { itemKey: otherWeapon.id },
+      payload: { inventoryItemId: otherRow.id },
     })
     expect(res.statusCode).toBe(200)
-    const body = res.json() as { character: { equipWeapon: string; inventory: Record<string, number> } }
-    expect(body.character.equipWeapon).toBe(otherWeapon.id)
-    expect(body.character.inventory[otherWeapon.id]).toBeUndefined()
-    expect(body.character.inventory['sword-1']).toBe(1)
+    const body = res.json() as { character: { equipWeapon: string; inventory: { id: string }[] } }
+    expect(body.character.equipWeapon).toBe(otherRow.id)
+    // Both rows are still in inventory (the displaced one too).
+    expect(body.character.inventory.some((it) => it.id === swordId)).toBe(true)
   })
 
-  it('equipping the same item already in the slot is a no-op', async () => {
+  it('equipping the same row already in the slot is a no-op', async () => {
     const token = await registerAndGetToken('test_equip_same')
-    const id = await createCharWithItem(token, 'Sa', 'sword-1', 2)
+    const { id, itemId } = await createCharWithItem(token, 'Sa', 'sword-1')
     await app.inject({
       method: 'POST', url: `/api/character/${id}/equip`,
       headers: { authorization: `Bearer ${token}` },
-      payload: { itemKey: 'sword-1' },
+      payload: { inventoryItemId: itemId },
     })
-    // Slot now holds sword-1; bag has 1 left. Re-equipping is a no-op —
-    // no over-decrement, slot unchanged, bag unchanged.
     const res = await app.inject({
       method: 'POST', url: `/api/character/${id}/equip`,
       headers: { authorization: `Bearer ${token}` },
-      payload: { itemKey: 'sword-1' },
+      payload: { inventoryItemId: itemId },
     })
     expect(res.statusCode).toBe(200)
-    const body = res.json() as { character: { equipWeapon: string | null; inventory: Record<string, number> } }
-    expect(body.character.equipWeapon).toBe('sword-1')
-    expect(body.character.inventory['sword-1']).toBe(1)
+    const body = res.json() as { character: { equipWeapon: string | null } }
+    expect(body.character.equipWeapon).toBe(itemId)
   })
 
-  it('rejects equipping an item the player does not own (409)', async () => {
+  it('rejects equipping a row the player does not own (409)', async () => {
     const token = await registerAndGetToken('test_equip_unowned')
     const created = await app.inject({
       method: 'POST', url: '/api/character', headers: { authorization: `Bearer ${token}` },
@@ -799,87 +798,63 @@ describe('POST /api/character/:id/equip', () => {
     const res = await app.inject({
       method: 'POST', url: `/api/character/${id}/equip`,
       headers: { authorization: `Bearer ${token}` },
-      payload: { itemKey: 'sword-1' },
+      payload: { inventoryItemId: 'does-not-exist' },
     })
     expect(res.statusCode).toBe(409)
   })
 
   it('rejects equipping a non-equip item (potion) with 400', async () => {
     const token = await registerAndGetToken('test_equip_potion')
-    const id = await createCharWithItem(token, 'P', 'potion-s', 5)
+    const { id, itemId } = await createCharWithItem(token, 'P', 'potion-s')
     const res = await app.inject({
       method: 'POST', url: `/api/character/${id}/equip`,
       headers: { authorization: `Bearer ${token}` },
-      payload: { itemKey: 'potion-s' },
+      payload: { inventoryItemId: itemId },
     })
     expect(res.statusCode).toBe(400)
   })
 
   it("returns 404 when equipping on another user's character", async () => {
     const tokenA = await registerAndGetToken('test_equip_a')
-    const id = await createCharWithItem(tokenA, 'A', 'sword-1')
+    const { id, itemId } = await createCharWithItem(tokenA, 'A', 'sword-1')
     const tokenB = await registerAndGetToken('test_equip_b')
     const res = await app.inject({
       method: 'POST', url: `/api/character/${id}/equip`,
       headers: { authorization: `Bearer ${tokenB}` },
-      payload: { itemKey: 'sword-1' },
+      payload: { inventoryItemId: itemId },
     })
     expect(res.statusCode).toBe(404)
   })
 })
 
 describe('POST /api/character/:id/unequip', () => {
-  it('clears the slot and returns the item to inventory (Slice 46 Transfer model)', async () => {
+  it('clears the FK; row + Plus stay intact', async () => {
     const token = await registerAndGetToken('test_unequip_ok')
     const created = await app.inject({
       method: 'POST', url: '/api/character', headers: { authorization: `Bearer ${token}` },
       payload: { name: 'U' },
     })
     const id = (created.json() as { character: { id: string } }).character.id
-    await prisma.inventoryItem.create({ data: { characterId: id, itemKey: 'sword-1', qty: 1 } })
-    // Equip moves Inventory → Slot (qty in bag = 0).
+    const row = await prisma.inventoryItem.create({
+      data: { characterId: id, itemKey: 'sword-1', qty: 1, plus: 3 },
+    })
     await app.inject({
       method: 'POST', url: `/api/character/${id}/equip`,
       headers: { authorization: `Bearer ${token}` },
-      payload: { itemKey: 'sword-1' },
+      payload: { inventoryItemId: row.id },
     })
-    // Unequip moves Slot → Inventory (qty in bag = 1 again).
     const res = await app.inject({
       method: 'POST', url: `/api/character/${id}/unequip`,
       headers: { authorization: `Bearer ${token}` },
       payload: { slot: 'weapon' },
     })
     expect(res.statusCode).toBe(200)
-    const body = res.json() as { character: { equipWeapon: string | null; inventory: Record<string, number> } }
+    const body = res.json() as { character: { equipWeapon: string | null; inventory: { id: string; plus: number }[] } }
     expect(body.character.equipWeapon).toBeNull()
-    expect(body.character.inventory['sword-1']).toBe(1)
-  })
-
-  it('admin-assigned slot without inventory row — unequip seeds qty=1 in bag (Slice 46)', async () => {
-    const token = await registerAndGetToken('test_unequip_safety')
-    const created = await app.inject({
-      method: 'POST', url: '/api/character', headers: { authorization: `Bearer ${token}` },
-      payload: { name: 'S' },
-    })
-    const id = (created.json() as { character: { id: string } }).character.id
-    // Simulate admin setting equipWeapon without adding to inventory.
-    await prisma.character.update({
-      where: { id },
-      data: { equipWeapon: 'sword-1' },
-    })
-
-    const res = await app.inject({
-      method: 'POST', url: `/api/character/${id}/unequip`,
-      headers: { authorization: `Bearer ${token}` },
-      payload: { slot: 'weapon' },
-    })
-    expect(res.statusCode).toBe(200)
-    const body = res.json() as { character: { equipWeapon: string | null; inventory: Record<string, number> } }
-    expect(body.character.equipWeapon).toBeNull()
-    // Under Transfer model this is just the normal flow — slot empties,
-    // item enters bag. The "safety" branch (Slice 39 Pointer-era) is now
-    // the standard path.
-    expect(body.character.inventory['sword-1']).toBe(1)
+    const back = body.character.inventory.find((it) => it.id === row.id)
+    expect(back).toBeDefined()
+    // Plus is preserved across equip/unequip.
+    expect(back!.plus).toBe(3)
   })
 
   it('no-op when the slot is already empty', async () => {
@@ -921,8 +896,8 @@ describe('POST /api/character/:id/consume', () => {
       payload: { itemKey: 'potion-s' },
     })
     expect(res.statusCode).toBe(200)
-    const body = res.json() as { character: { hp: number; maxHp: number; inventory: Record<string, number> } }
-    expect(body.character.inventory['potion-s']).toBe(2)
+    const body = res.json() as { character: { hp: number; maxHp: number; inventory: { itemKey: string; qty: number }[] } }
+    expect(body.character.inventory.find((it) => it.itemKey === 'potion-s')?.qty).toBe(2)
     expect(body.character.hp).toBeGreaterThan(10)
     expect(body.character.hp).toBeLessThanOrEqual(body.character.maxHp)
   })
@@ -930,9 +905,14 @@ describe('POST /api/character/:id/consume', () => {
   it('removes the inventory row when the last unit is consumed', async () => {
     const token = await registerAndGetToken('test_consume_last')
     const id = await createCharBelowFullHp(token, 'L')
+    // Slice 47: lookup by (characterId, itemKey) then update by row id —
+    // composite unique is gone but mat/consume still stack so there's at
+    // most one row per itemKey.
+    const potionRow = await prisma.inventoryItem.findFirstOrThrow({
+      where: { characterId: id, itemKey: 'potion-s' },
+    })
     await prisma.inventoryItem.update({
-      where: { characterId_itemKey: { characterId: id, itemKey: 'potion-s' } },
-      data: { qty: 1 },
+      where: { id: potionRow.id }, data: { qty: 1 },
     })
     const res = await app.inject({
       method: 'POST', url: `/api/character/${id}/consume`,
@@ -940,8 +920,8 @@ describe('POST /api/character/:id/consume', () => {
       payload: { itemKey: 'potion-s' },
     })
     expect(res.statusCode).toBe(200)
-    const body = res.json() as { character: { inventory: Record<string, number> } }
-    expect(body.character.inventory['potion-s']).toBeUndefined()
+    const body = res.json() as { character: { inventory: { itemKey: string }[] } }
+    expect(body.character.inventory.find((it) => it.itemKey === 'potion-s')).toBeUndefined()
   })
 
   it('rejects consuming an item not in inventory with 409', async () => {
@@ -1013,9 +993,10 @@ describe('POST /api/character/:id/shop/buy', () => {
       payload: { npcId: shop.id, itemKey: stockItem.itemId, qty: 1 },
     })
     expect(res.statusCode).toBe(200)
-    const body = res.json() as { character: { gold: number; inventory: Record<string, number> } }
+    const body = res.json() as { character: { gold: number; inventory: { itemKey: string; qty: number }[] } }
     expect(body.character.gold).toBe(100 - stockItem.price)
-    expect(body.character.inventory[stockItem.itemId]).toBeGreaterThanOrEqual(1)
+    const bought = body.character.inventory.find((it) => it.itemKey === stockItem.itemId)
+    expect(bought?.qty ?? 0).toBeGreaterThanOrEqual(1)
   })
 
   it('rejects buying with insufficient gold (409)', async () => {
@@ -1138,8 +1119,28 @@ describe('POST /api/character/:id/heal-full', () => {
   })
 })
 
-// ─── Slice 42 — craft intent endpoint ─────────────────────────────────────
+// ─── Slice 42 — craft intent endpoint (Slice 47: per-instance result) ────
 describe('POST /api/character/:id/craft', () => {
+  // Slice 47: stock mats via direct InventoryItem.create per stack. Result
+  // for weapon/armor recipes becomes a fresh per-instance row at plus=0.
+  async function findUnclassedRecipe() {
+    return prisma.recipe.findFirstOrThrow({
+      where: { classReq: { equals: Prisma.JsonNull } }, include: { mats: true },
+    })
+  }
+  async function stockMats(characterId: string, mats: { itemId: string; qty: number }[]): Promise<void> {
+    for (const m of mats) {
+      const existing = await prisma.inventoryItem.findFirst({
+        where: { characterId, itemKey: m.itemId },
+      })
+      if (existing) {
+        await prisma.inventoryItem.update({ where: { id: existing.id }, data: { qty: m.qty } })
+      } else {
+        await prisma.inventoryItem.create({ data: { characterId, itemKey: m.itemId, qty: m.qty } })
+      }
+    }
+  }
+
   it('spends gold + mats and produces the result item', async () => {
     const token = await registerAndGetToken('test_craft_ok')
     const created = await app.inject({
@@ -1147,20 +1148,9 @@ describe('POST /api/character/:id/craft', () => {
       payload: { name: 'C' },
     })
     const id = (created.json() as { character: { id: string } }).character.id
-
-    // Pick the first recipe with no class restriction so we don't have to
-    // wrestle with classChange. Stock the character with its mats + gold.
-    const recipe = await prisma.recipe.findFirstOrThrow({
-      where: { classReq: { equals: null } }, include: { mats: true },
-    })
+    const recipe = await findUnclassedRecipe()
     await prisma.character.update({ where: { id }, data: { gold: recipe.gold + 1000 } })
-    for (const m of recipe.mats) {
-      await prisma.inventoryItem.upsert({
-        where: { characterId_itemKey: { characterId: id, itemKey: m.itemId } },
-        create: { characterId: id, itemKey: m.itemId, qty: m.qty },
-        update: { qty: m.qty },
-      })
-    }
+    await stockMats(id, recipe.mats)
 
     const res = await app.inject({
       method: 'POST', url: `/api/character/${id}/craft`,
@@ -1168,13 +1158,14 @@ describe('POST /api/character/:id/craft', () => {
       payload: { recipeId: recipe.id },
     })
     expect(res.statusCode).toBe(200)
-    const body = res.json() as { character: { gold: number; inventory: Record<string, number> } }
-    // Mats consumed (deleted because we stocked exact qty).
+    const body = res.json() as { character: { gold: number; inventory: { itemKey: string; qty: number; plus: number }[] } }
     for (const m of recipe.mats) {
-      expect(body.character.inventory[m.itemId]).toBeUndefined()
+      expect(body.character.inventory.find((it) => it.itemKey === m.itemId)).toBeUndefined()
     }
-    // Result produced.
-    expect(body.character.inventory[recipe.id]).toBe(1)
+    const resultRow = body.character.inventory.find((it) => it.itemKey === recipe.id)
+    expect(resultRow).toBeDefined()
+    expect(resultRow!.qty).toBe(1)
+    expect(resultRow!.plus).toBe(0)
     expect(body.character.gold).toBe(1000)
   })
 
@@ -1185,11 +1176,8 @@ describe('POST /api/character/:id/craft', () => {
       payload: { name: 'M' },
     })
     const id = (created.json() as { character: { id: string } }).character.id
-    const recipe = await prisma.recipe.findFirstOrThrow({
-      where: { classReq: { equals: null } }, include: { mats: true },
-    })
+    const recipe = await findUnclassedRecipe()
     await prisma.character.update({ where: { id }, data: { gold: 10_000 } })
-    // No mats stocked.
     const res = await app.inject({
       method: 'POST', url: `/api/character/${id}/craft`,
       headers: { authorization: `Bearer ${token}` },
@@ -1205,16 +1193,8 @@ describe('POST /api/character/:id/craft', () => {
       payload: { name: 'G' },
     })
     const id = (created.json() as { character: { id: string } }).character.id
-    const recipe = await prisma.recipe.findFirstOrThrow({
-      where: { classReq: { equals: null } }, include: { mats: true },
-    })
-    for (const m of recipe.mats) {
-      await prisma.inventoryItem.upsert({
-        where: { characterId_itemKey: { characterId: id, itemKey: m.itemId } },
-        create: { characterId: id, itemKey: m.itemId, qty: m.qty },
-        update: { qty: m.qty },
-      })
-    }
+    const recipe = await findUnclassedRecipe()
+    await stockMats(id, recipe.mats)
     await prisma.character.update({ where: { id }, data: { gold: 0 } })
     const res = await app.inject({
       method: 'POST', url: `/api/character/${id}/craft`,
@@ -1240,83 +1220,144 @@ describe('POST /api/character/:id/craft', () => {
   })
 })
 
-// ─── Slice 43 — enhance intent endpoint ───────────────────────────────────
+// ─── Slice 43 → 47 → 48: enhance gated by Blacksmith NPC ─────────────────
 describe('POST /api/character/:id/enhance', () => {
-  async function makeCharWithGearAndStones(token: string, name: string, stones = 20): Promise<string> {
+  // Slice 48: every attempt needs the Blacksmith NPC id. The village seed
+  // places one at (6,3) in 'village' — characters spawn on that map so the
+  // adjacency-by-mapId check passes without moving.
+  const BLACKSMITH = 'village-blacksmith'
+
+  // Bump gold high enough for a +0 attempt (100 gold) plus headroom for the
+  // few-attempt loops the original tests imply.
+  async function makeCharWithGearAndStones(token: string, name: string, stones = 20, gold = 10_000): Promise<{ id: string; weaponId: string }> {
     const created = await app.inject({
       method: 'POST', url: '/api/character', headers: { authorization: `Bearer ${token}` },
       payload: { name },
     })
     const id = (created.json() as { character: { id: string } }).character.id
-    // Slot a weapon + plus-stones in inventory.
-    await prisma.inventoryItem.upsert({
-      where: { characterId_itemKey: { characterId: id, itemKey: 'sword-1' } },
-      create: { characterId: id, itemKey: 'sword-1', qty: 1 },
-      update: { qty: 1 },
+    await prisma.character.update({ where: { id }, data: { gold } })
+    const sword = await prisma.inventoryItem.create({
+      data: { characterId: id, itemKey: 'sword-1', qty: 1 },
     })
-    await prisma.inventoryItem.upsert({
-      where: { characterId_itemKey: { characterId: id, itemKey: 'plus-stone' } },
-      create: { characterId: id, itemKey: 'plus-stone', qty: stones },
-      update: { qty: stones },
-    })
-    return id
+    if (stones > 0) {
+      await prisma.inventoryItem.create({
+        data: { characterId: id, itemKey: 'plus-stone', qty: stones },
+      })
+    }
+    return { id, weaponId: sword.id }
   }
 
-  it('consumes stones + reports an outcome (ok or fail) when the player has enough', async () => {
+  it('consumes stones + gold and reports an outcome (ok or fail) when the player has enough', async () => {
     const token = await registerAndGetToken('test_enh_ok')
-    const id = await makeCharWithGearAndStones(token, 'E', 20)
+    const { id, weaponId } = await makeCharWithGearAndStones(token, 'E', 20, 10_000)
     const res = await app.inject({
       method: 'POST', url: `/api/character/${id}/enhance`,
       headers: { authorization: `Bearer ${token}` },
-      payload: { itemKey: 'sword-1', slot: '_w' },
+      payload: { inventoryItemId: weaponId, npcId: BLACKSMITH },
     })
     expect(res.statusCode).toBe(200)
     const body = res.json() as {
-      character: { inventory: Record<string, number>; plus: Record<string, number> }
+      character: { gold: number; inventory: { itemKey: string; qty: number; plus: number }[] }
       outcome: 'ok' | 'fail'
       stonesConsumed: number
+      goldConsumed: number
       newPlus: number
     }
     expect(['ok', 'fail']).toContain(body.outcome)
     expect(body.stonesConsumed).toBeGreaterThanOrEqual(1)
-    expect(body.character.inventory['plus-stone']).toBe(20 - body.stonesConsumed)
+    expect(body.goldConsumed).toBe(100) // 100 * (0 + 1)
+    expect(body.character.gold).toBe(10_000 - 100)
+    const stoneRow = body.character.inventory.find((it) => it.itemKey === 'plus-stone')
+    expect(stoneRow?.qty ?? 0).toBe(20 - body.stonesConsumed)
   })
 
   it('rejects when the player has no plus-stones (409 no-stone)', async () => {
     const token = await registerAndGetToken('test_enh_nostone')
-    const id = await makeCharWithGearAndStones(token, 'N', 0)
-    // Also delete the empty stone row so it's truly absent.
-    await prisma.inventoryItem.deleteMany({ where: { characterId: id, itemKey: 'plus-stone' } })
+    const { id, weaponId } = await makeCharWithGearAndStones(token, 'N', 0, 10_000)
     const res = await app.inject({
       method: 'POST', url: `/api/character/${id}/enhance`,
       headers: { authorization: `Bearer ${token}` },
-      payload: { itemKey: 'sword-1', slot: '_w' },
+      payload: { inventoryItemId: weaponId, npcId: BLACKSMITH },
     })
     expect(res.statusCode).toBe(409)
     expect((res.json() as { error: string }).error).toBe('no-stone')
   })
 
-  it('rejects slot/type mismatch (400) — _w on armor', async () => {
-    const token = await registerAndGetToken('test_enh_slot_mismatch')
-    const id = await makeCharWithGearAndStones(token, 'S')
-    // Find any armor item.
-    const armor = await prisma.item.findFirstOrThrow({ where: { type: 'armor' } })
+  it('Slice 48: rejects when stones are enough but gold < goldCost (409 no-gold)', async () => {
+    const token = await registerAndGetToken('test_enh_nogold')
+    const { id, weaponId } = await makeCharWithGearAndStones(token, 'NG', 20, 50) // +0 fee = 100; only 50
     const res = await app.inject({
       method: 'POST', url: `/api/character/${id}/enhance`,
       headers: { authorization: `Bearer ${token}` },
-      payload: { itemKey: armor.id, slot: '_w' },
+      payload: { inventoryItemId: weaponId, npcId: BLACKSMITH },
+    })
+    expect(res.statusCode).toBe(409)
+    expect((res.json() as { error: string }).error).toBe('no-gold')
+  })
+
+  it('Slice 48: rejects enhancing the currently-equipped item (409 item is equipped)', async () => {
+    const token = await registerAndGetToken('test_enh_equipped')
+    const { id, weaponId } = await makeCharWithGearAndStones(token, 'EQ', 20, 10_000)
+    await app.inject({
+      method: 'POST', url: `/api/character/${id}/equip`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { inventoryItemId: weaponId },
+    })
+    const res = await app.inject({
+      method: 'POST', url: `/api/character/${id}/enhance`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { inventoryItemId: weaponId, npcId: BLACKSMITH },
+    })
+    expect(res.statusCode).toBe(409)
+    expect((res.json() as { error: string }).error).toBe('item is equipped')
+  })
+
+  it('Slice 48: rejects when the NPC is not a Blacksmith (404)', async () => {
+    const token = await registerAndGetToken('test_enh_wrongnpc')
+    const { id, weaponId } = await makeCharWithGearAndStones(token, 'WN', 20, 10_000)
+    const res = await app.inject({
+      method: 'POST', url: `/api/character/${id}/enhance`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { inventoryItemId: weaponId, npcId: 'village-shopkeeper' },
+    })
+    expect(res.statusCode).toBe(404)
+  })
+
+  it('Slice 48: rejects when the Blacksmith is on another map (404)', async () => {
+    const token = await registerAndGetToken('test_enh_othermap')
+    const { id, weaponId } = await makeCharWithGearAndStones(token, 'OM', 20, 10_000)
+    // Move character to sakura — village-blacksmith is no longer reachable.
+    await prisma.character.update({ where: { id }, data: { mapId: 'sakura' } })
+    const res = await app.inject({
+      method: 'POST', url: `/api/character/${id}/enhance`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { inventoryItemId: weaponId, npcId: BLACKSMITH },
+    })
+    expect(res.statusCode).toBe(404)
+  })
+
+  it('rejects enhancing a non-gear item (400) — potion', async () => {
+    const token = await registerAndGetToken('test_enh_wrong_type')
+    const { id } = await makeCharWithGearAndStones(token, 'P', 20, 10_000)
+    const potion = await prisma.inventoryItem.create({
+      data: { characterId: id, itemKey: 'potion-s', qty: 1 },
+    })
+    const res = await app.inject({
+      method: 'POST', url: `/api/character/${id}/enhance`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { inventoryItemId: potion.id, npcId: BLACKSMITH },
     })
     expect(res.statusCode).toBe(400)
   })
 
   it("returns 404 when enhancing on another user's character", async () => {
     const tokenA = await registerAndGetToken('test_enh_a')
-    const id = await makeCharWithGearAndStones(tokenA, 'A')
+    const { id, weaponId } = await makeCharWithGearAndStones(tokenA, 'A', 20, 10_000)
     const tokenB = await registerAndGetToken('test_enh_b')
     const res = await app.inject({
       method: 'POST', url: `/api/character/${id}/enhance`,
       headers: { authorization: `Bearer ${tokenB}` },
-      payload: { itemKey: 'sword-1', slot: '_w' },
+      payload: { inventoryItemId: weaponId, npcId: BLACKSMITH },
     })
     expect(res.statusCode).toBe(404)
   })

@@ -1362,9 +1362,12 @@ function CharacterEditorForm({
   onSubmit: (patch: AdminCharacterPatch) => void
   onCancel: () => void
 }) {
-  // Slice 33: pre-fill EVERY field from the row so saving without
-  // touching a field doesn't nuke that field. Previously inventory/plus
-  // defaulted to '{}' which deleted items on save.
+  const token = useToken()
+  // Slice 49: track local inventory state so Set-Plus mutations are
+  // reflected immediately without re-listing the whole admin character
+  // table. The patch onSubmit (PUT /api/admin/characters/:id) doesn't
+  // touch inventory, so divergence is impossible.
+  const [inventory, setInventory] = useState(initial.inventory)
   const [lv, setLv] = useState(initial.lv)
   const [exp, setExp] = useState(initial.exp)
   const [gold, setGold] = useState(initial.gold)
@@ -1378,33 +1381,25 @@ function CharacterEditorForm({
     agi: initial.agi, luk: initial.luk, vit: initial.vit,
     unspentPoints: initial.unspentPoints,
   }, null, 2))
-  const [inventoryJson, setInventoryJson] = useState(JSON.stringify(initial.inventory, null, 2))
-  const [equipWeapon, setEquipWeapon] = useState(initial.equipWeapon ?? '')
-  const [equipArmor, setEquipArmor] = useState(initial.equipArmor ?? '')
-  const [plusJson, setPlusJson] = useState(JSON.stringify(initial.plus, null, 2))
   const [jsonErr, setJsonErr] = useState<string | null>(null)
 
   function submit(e: React.FormEvent) {
     e.preventDefault()
     setJsonErr(null)
     let primary: Record<string, number>
-    let inventory: Record<string, number>
-    let plus: Record<string, number>
     try {
       primary = JSON.parse(primaryJson)
-      inventory = JSON.parse(inventoryJson)
-      plus = JSON.parse(plusJson)
     } catch (err) {
       setJsonErr(`JSON parse error: ${err instanceof Error ? err.message : String(err)}`)
       return
     }
+    // Slice 47: inventory / Plus / equip slots are no longer part of this
+    // patch (per-instance + FK semantics). Slice 49 adds per-row admin
+    // intent endpoints (Set Plus, Add Item) — until then admin manages
+    // gear through the player-facing intent endpoints.
     const patch: AdminCharacterPatch = {
       lv, exp, gold, mapId, raceId, classId, transcended, classChanged,
       ...primary,
-      inventory,
-      plus,
-      equipWeapon: equipWeapon === '' ? null : equipWeapon,
-      equipArmor: equipArmor === '' ? null : equipArmor,
     }
     onSubmit(patch)
   }
@@ -1444,43 +1439,24 @@ function CharacterEditorForm({
         </label>
       </div>
 
-      <div className="admin-form-row" style={{ gridTemplateColumns: 'repeat(2, 1fr)', marginTop: 12 }}>
-        <Field label="Equip Weapon (item id หรือเว้นว่าง)">
-          <select value={equipWeapon} onChange={(e) => setEquipWeapon(e.target.value)}>
-            <option value="">(none)</option>
-            {items.filter((it) => it.type === 'weapon').map((it) => (
-              <option key={it.id} value={it.id}>{it.emoji} {it.id} — {it.name}</option>
-            ))}
-          </select>
-        </Field>
-        <Field label="Equip Armor">
-          <select value={equipArmor} onChange={(e) => setEquipArmor(e.target.value)}>
-            <option value="">(none)</option>
-            {items.filter((it) => it.type === 'armor').map((it) => (
-              <option key={it.id} value={it.id}>{it.emoji} {it.id} — {it.name}</option>
-            ))}
-          </select>
-        </Field>
-      </div>
-
-      <div style={{ marginTop: 12, fontSize: 12, color: '#6b7280' }}>
-        ✏️ Primary stats / Inventory / Plus pre-fill จากค่าปัจจุบัน — แก้ตรงๆ ใน textarea ข้างล่างได้เลย
-      </div>
-
-      <div className="admin-form-row" style={{ gridTemplateColumns: 'repeat(3, 1fr)', marginTop: 6 }}>
+      <div className="admin-form-row" style={{ gridTemplateColumns: '1fr', marginTop: 12 }}>
         <Field label='Primary stats JSON — { "str":10, "int":10, "dex":10, "agi":10, "luk":10, "vit":10, "unspentPoints":0 }'>
           <textarea value={primaryJson} onChange={(e) => setPrimaryJson(e.target.value)} rows={6}
             style={{ fontFamily: 'monospace', fontSize: 11, resize: 'vertical' }} />
         </Field>
-        <Field label='Inventory JSON — { "itemKey": qty, ... }'>
-          <textarea value={inventoryJson} onChange={(e) => setInventoryJson(e.target.value)} rows={6}
-            style={{ fontFamily: 'monospace', fontSize: 11, resize: 'vertical' }} />
-        </Field>
-        <Field label='Plus level JSON — { "sword-1_w": 5, "armor-1_a": 3 }'>
-          <textarea value={plusJson} onChange={(e) => setPlusJson(e.target.value)} rows={6}
-            style={{ fontFamily: 'monospace', fontSize: 11, resize: 'vertical' }} />
-        </Field>
       </div>
+
+      {/* Slice 49: per-row inventory table with Set Plus on each gear row. */}
+      <CharacterInventoryEditor
+        token={token}
+        items={items}
+        rows={inventory}
+        equipWeaponId={initial.equipWeapon}
+        equipArmorId={initial.equipArmor}
+        onRowUpdated={(updated) =>
+          setInventory((prev) => prev.map((r) => (r.id === updated.id ? { ...r, plus: updated.plus } : r)))
+        }
+      />
 
       {jsonErr && <Toast msg={jsonErr} kind="err" />}
 
@@ -1489,6 +1465,100 @@ function CharacterEditorForm({
         <button type="submit" className="btn-a btn-a-primary">บันทึก</button>
       </div>
     </form>
+  )
+}
+
+/** Slice 49: per-row inventory table inside the character editor.
+ *  Read-only for mat/consume (qty only); weapon/armor get a `Set Plus`
+ *  select that POSTs to `/api/admin/inventory/:itemId/set-plus` and
+ *  bubbles the updated row back to the parent. Server re-derives the
+ *  owner's atk/def/spd as part of the same transaction, so the next
+ *  character GET picks up the new cached value. */
+function CharacterInventoryEditor({
+  token, items, rows, equipWeaponId, equipArmorId, onRowUpdated,
+}: {
+  token: string
+  items: AdminItemRow[]
+  rows: Array<{ id: string; itemKey: string; qty: number; plus: number }>
+  equipWeaponId: string | null
+  equipArmorId: string | null
+  onRowUpdated: (row: { id: string; itemKey: string; qty: number; plus: number }) => void
+}) {
+  const [busyId, setBusyId] = useState<string | null>(null)
+  const [err, setErr] = useState<string | null>(null)
+  const byKey = new Map(items.map((it) => [it.id, it]))
+
+  async function setPlus(rowId: string, plus: number) {
+    setBusyId(rowId)
+    setErr(null)
+    try {
+      const r = await api.adminSetItemPlus(token, rowId, plus)
+      onRowUpdated(r.inventoryItem)
+    } catch (e) {
+      setErr(`set-plus failed: ${e instanceof Error ? e.message : String(e)}`)
+    } finally {
+      setBusyId(null)
+    }
+  }
+
+  if (rows.length === 0) {
+    return (
+      <div style={{ marginTop: 12, fontSize: 12, color: '#6b7280' }}>
+        ของในกระเป๋า: (ว่าง). Add-Item flow ยังไม่ทำ — Slice 50+.
+      </div>
+    )
+  }
+
+  return (
+    <div style={{ marginTop: 12 }}>
+      <div style={{ fontSize: 12, color: '#374151', fontWeight: 600, marginBottom: 4 }}>
+        ของในกระเป๋า ({rows.length} แถว) — กดเลือก Plus แล้ว server จะ re-derive atk/def ทันที
+      </div>
+      <table className="admin-table" style={{ fontSize: 11 }}>
+        <thead>
+          <tr>
+            <th>Item</th>
+            <th>Type</th>
+            <th>Qty</th>
+            <th>Plus</th>
+            <th>Equipped</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => {
+            const def = byKey.get(row.itemKey)
+            const isGear = def?.type === 'weapon' || def?.type === 'armor'
+            const equipped =
+              row.id === equipWeaponId ? '⚔ weapon' :
+              row.id === equipArmorId ? '🛡 armor' : ''
+            return (
+              <tr key={row.id}>
+                <td>{def?.emoji ?? '❔'} {row.itemKey}</td>
+                <td>{def?.type ?? '?'}</td>
+                <td>{row.qty}</td>
+                <td>
+                  {isGear ? (
+                    <select
+                      value={row.plus}
+                      disabled={busyId === row.id}
+                      onChange={(e) => void setPlus(row.id, Number(e.target.value))}
+                    >
+                      {Array.from({ length: 11 }, (_, i) => (
+                        <option key={i} value={i}>+{i}</option>
+                      ))}
+                    </select>
+                  ) : (
+                    <span style={{ color: '#9ca3af' }}>—</span>
+                  )}
+                </td>
+                <td>{equipped}</td>
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
+      {err && <Toast msg={err} kind="err" />}
+    </div>
   )
 }
 

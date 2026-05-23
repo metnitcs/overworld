@@ -1,7 +1,7 @@
 import type { ModalType } from '@asura/shared'
 import { InventoryModal } from './modals/InventoryModal'
 import { CraftModal } from './modals/CraftModal'
-import { EnhanceModal } from './modals/EnhanceModal'
+import { BlacksmithModal } from './modals/BlacksmithModal'
 import { ClassChangeModal } from './modals/ClassChangeModal'
 import { ShopModal } from './modals/ShopModal'
 import { HelpModal } from './modals/HelpModal'
@@ -17,7 +17,7 @@ interface Props {
 const titles: Record<Exclude<ModalType, 'none'>, string> = {
   inventory:      '🎒 ไอเท็ม',
   craft:          '⚒ คราฟอาวุธ / เกราะ',
-  enhance:        '✨ ตีบวกอาวุธ',
+  blacksmith:     '🛠️ ช่างตีเหล็ก',
   'class-change': '🔄 เปลี่ยนอาชีพ',
   shop:           '💊 ร้านค้าหมู่บ้าน',
   help:           '❓ วิธีเล่น',
@@ -47,7 +47,7 @@ export function Modal({ type, onClose }: Props) {
         <div className="flex-1 overflow-y-auto p-3 bg-gradient-to-b from-kw-panel-in to-white">
           {type === 'inventory'    && <InventoryModal />}
           {type === 'craft'        && <CraftModal />}
-          {type === 'enhance'      && <EnhanceModal />}
+          {type === 'blacksmith'   && <BlacksmithModal />}
           {type === 'class-change' && <ClassChangeModal />}
           {type === 'shop'         && <ShopModal />}
           {type === 'help'         && <HelpModal />}

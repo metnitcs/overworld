@@ -4,6 +4,7 @@ import path from 'node:path'
 import fs from 'node:fs'
 import crypto from 'node:crypto'
 import { pipeline } from 'node:stream/promises'
+import { deriveStats, type GameState, type InventoryItem } from '@asura/shared'
 
 // ─── Schemas ──────────────────────────────────────────────────────────────
 
@@ -144,6 +145,15 @@ const userStatusBody = z.object({
   status: z.enum(['ACTIVE', 'SUSPENDED', 'BANNED']),
 })
 
+// ─── Slice 49: per-row admin Set Plus ─────────────────────────────────
+// Sets the `plus` value on one InventoryItem row, re-derives the owner's
+// cached atk/def/spd (so the player's stats update immediately), and logs
+// the change to the audit table. Replaces the Slice 33 "edit Plus via
+// JSON blob" path that silently skipped re-derive (the original bug).
+const inventorySetPlusBody = z.object({
+  plus: z.number().int().min(0).max(10),
+})
+
 const characterPatch = z.object({
   lv: z.number().int().min(1).optional(),
   exp: z.number().int().min(0).optional(),
@@ -169,10 +179,12 @@ const characterPatch = z.object({
   classId: z.string().optional(),
   transcended: z.boolean().optional(),
   classChanged: z.boolean().optional(),
-  equipWeapon: z.string().nullable().optional(),
-  equipArmor: z.string().nullable().optional(),
-  plus: z.record(z.string(), z.number().int().min(0)).optional(),
-  inventory: z.record(z.string(), z.number().int().min(0)).optional(),
+  // Slice 47: gear is per-instance and Plus lives on the InventoryItem
+  // row itself. The old admin shape (string itemKey for equip, JSON blob
+  // for plus, qty Record for inventory) can't represent per-instance state,
+  // so those fields are removed from this PUT until Slice 49 ships a proper
+  // per-row admin editor. Admin can still edit base stats / lv / gold / map
+  // here. Equipping / unequipping happens via the player intent endpoints.
 })
 
 // ─── Routes ──────────────────────────────────────────────────────────────
@@ -556,10 +568,12 @@ export function registerAdminRoutes(app: FastifyInstance): void {
         inventory: true,
       },
     })
+    // Slice 47: inventory is now a list of per-instance rows (each
+    // weapon/armor row carries its own `plus`; mat/consume stack with
+    // qty). equipWeaponId/equipArmorId are FKs to InventoryItem.id.
+    // The old `plus: Record<>` field is gone (moved onto each row).
     return reply.send({
       characters: characters.map((c) => {
-        const inv: Record<string, number> = {}
-        for (const it of c.inventory) inv[it.itemKey] = it.qty
         return {
           id: c.id,
           username: c.user.username,
@@ -572,15 +586,15 @@ export function registerAdminRoutes(app: FastifyInstance): void {
           mapId: c.mapId,
           transcended: c.transcended,
           classChanged: c.classChanged,
-          // Slice 33 additions:
           str: c.str, int: c.int, dex: c.dex, agi: c.agi, luk: c.luk, vit: c.vit,
           unspentPoints: c.unspentPoints,
           hp: c.hp, maxHp: c.maxHp, mp: c.mp, maxMp: c.maxMp,
           atk: c.atk, def: c.def, spd: c.spd,
-          equipWeapon: c.equipWeapon,
-          equipArmor: c.equipArmor,
-          plus: c.plus,
-          inventory: inv,
+          equipWeapon: c.equipWeaponId,
+          equipArmor: c.equipArmorId,
+          inventory: c.inventory.map((it) => ({
+            id: it.id, itemKey: it.itemKey, qty: it.qty, plus: it.plus,
+          })),
         }
       }),
     })
@@ -592,29 +606,55 @@ export function registerAdminRoutes(app: FastifyInstance): void {
     const { id } = req.params as { id: string }
     const exists = await app.prisma.character.findUnique({ where: { id } })
     if (!exists) return reply.code(404).send({ error: 'character not found' })
-    // Slice 30: inventory is a separate table — split it out of the
-    // scalar update + apply it in a transaction (mirrors PUT /api/character/:id).
-    const { inventory, ...scalars } = parsed.data
+    // Slice 47: inventory + plus + equip slots no longer flow through this
+    // PUT (see schema comment). The update is now scalar-only — per-row
+    // mutations go through `POST /api/admin/inventory/:itemId/set-plus`
+    // and the player intent endpoints.
+    //
+    // Slice 49: when the admin changes primary stats / level / race / class,
+    // re-derive the cached atk/def/spd/maxHp/maxMp from the new values so
+    // the player sees the change immediately. Without this defense, a GM
+    // bumping STR via this PUT would leave atk stale until the next intent
+    // endpoint hit (the root pattern of the original "ตี+ ไม่เห็นเปลี่ยน"
+    // bug, just on a different field).
+    const data = parsed.data
+    const reDeriveTriggers: Array<keyof typeof data> = [
+      'str', 'int', 'dex', 'agi', 'luk', 'vit', 'lv', 'raceId', 'classId',
+    ]
+    const needsReDerive = reDeriveTriggers.some((k) => data[k] !== undefined)
     const updated = await app.prisma.$transaction(async (tx) => {
-      await tx.character.update({
-        where: { id },
-        data: scalars,
-      })
-      if (inventory !== undefined) {
-        await tx.inventoryItem.deleteMany({ where: { characterId: id } })
-        const entries = Object.entries(inventory).filter(([, qty]) => qty > 0)
-        if (entries.length > 0) {
-          await tx.inventoryItem.createMany({
-            data: entries.map(([itemKey, qty]) => ({
-              characterId: id, itemKey, qty,
-            })),
-          })
+      await tx.character.update({ where: { id }, data })
+      if (needsReDerive) {
+        const after = await tx.character.findUniqueOrThrow({
+          where: { id }, include: { inventory: true },
+        })
+        const draft: GameState & { id: string } = {
+          id: after.id, name: after.name, raceId: after.raceId, classId: after.classId,
+          lv: after.lv, exp: after.exp,
+          hp: after.hp, maxHp: after.maxHp, mp: after.mp, maxMp: after.maxMp,
+          atk: after.atk, def: after.def, spd: after.spd,
+          str: after.str, int: after.int, dex: after.dex,
+          agi: after.agi, luk: after.luk, vit: after.vit,
+          unspentPoints: after.unspentPoints,
+          gold: after.gold,
+          inventory: after.inventory.map((it) => ({
+            id: it.id, itemKey: it.itemKey, qty: it.qty, plus: it.plus,
+          })),
+          equipWeapon: after.equipWeaponId, equipArmor: after.equipArmorId,
+          map: after.mapId, px: after.px, py: after.py, steps: after.steps,
+          transcended: after.transcended, classChanged: after.classChanged,
         }
+        const bundle = await app.contentCache.get()
+        const next = deriveStats(draft, { items: bundle.items })
+        await tx.character.update({
+          where: { id },
+          data: {
+            maxHp: next.maxHp, maxMp: next.maxMp,
+            hp: next.hp, mp: next.mp,
+            atk: next.atk, def: next.def, spd: next.spd,
+          },
+        })
       }
-      // Slice 35: re-fetch with inventory included so the client can use
-      // the response directly without a second GET. Previously the PUT
-      // returned just the scalar row, so the admin UI either had to
-      // pull the list again or assume stale.
       return tx.character.findUniqueOrThrow({
         where: { id }, include: { inventory: true },
       })
@@ -625,8 +665,6 @@ export function registerAdminRoutes(app: FastifyInstance): void {
     })
     // Project into the same shape as the list endpoint so the client
     // can splice it directly into the table cache.
-    const inv: Record<string, number> = {}
-    for (const it of updated.inventory) inv[it.itemKey] = it.qty
     const user = await app.prisma.user.findUnique({
       where: { id: updated.userId }, select: { username: true },
     })
@@ -648,10 +686,11 @@ export function registerAdminRoutes(app: FastifyInstance): void {
         unspentPoints: updated.unspentPoints,
         hp: updated.hp, maxHp: updated.maxHp, mp: updated.mp, maxMp: updated.maxMp,
         atk: updated.atk, def: updated.def, spd: updated.spd,
-        equipWeapon: updated.equipWeapon,
-        equipArmor: updated.equipArmor,
-        plus: updated.plus,
-        inventory: inv,
+        equipWeapon: updated.equipWeaponId,
+        equipArmor: updated.equipArmorId,
+        inventory: updated.inventory.map((it) => ({
+          id: it.id, itemKey: it.itemKey, qty: it.qty, plus: it.plus,
+        })),
       },
     })
   })
@@ -667,6 +706,83 @@ export function registerAdminRoutes(app: FastifyInstance): void {
       payload: { name: exists.name, userId: exists.userId, lv: exists.lv },
     })
     return reply.send({ ok: true })
+  })
+
+  // ─── Slice 49: POST /api/admin/inventory/:itemId/set-plus ─────────────
+  // Per-row Plus override for GM support. Validates the row exists + the
+  // item type is weapon/armor, updates the row's Plus, and (critically)
+  // re-runs deriveStats on the owner so cached `atk/def/spd` reflect the
+  // change. Audited as `inventory.set-plus`.
+  //
+  // Replaces the Slice 33 admin PUT path where Plus was a Character.plus
+  // JSON column written without re-derive — the original "admin ตี+ แต่
+  // damage ไม่ขยับ" bug. With per-instance (Slice 47) + this endpoint,
+  // the bug is structurally fixed.
+  app.post('/api/admin/inventory/:itemId/set-plus', guard, async (req, reply) => {
+    const parsed = inventorySetPlusBody.safeParse(req.body)
+    if (!parsed.success) {
+      return reply.code(400).send({ error: 'invalid input', issues: parsed.error.issues })
+    }
+    const { itemId } = req.params as { itemId: string }
+    const { plus } = parsed.data
+
+    const row = await app.prisma.inventoryItem.findUnique({ where: { id: itemId } })
+    if (!row) return reply.code(404).send({ error: 'inventory item not found' })
+
+    const bundle = await app.contentCache.get()
+    const item = bundle.items[row.itemKey]
+    if (!item) return reply.code(404).send({ error: 'item def not found' })
+    if (item.type !== 'weapon' && item.type !== 'armor') {
+      return reply.code(400).send({ error: 'plus only applies to weapon/armor' })
+    }
+
+    const owner = await app.prisma.character.findUniqueOrThrow({
+      where: { id: row.characterId }, include: { inventory: true },
+    })
+    // Synthesise the post-mutation inventory so deriveStats sees the new
+    // Plus on the equipped row (if this row is equipped).
+    const nextInventory: InventoryItem[] = owner.inventory.map((it) => ({
+      id: it.id, itemKey: it.itemKey, qty: it.qty,
+      plus: it.id === row.id ? plus : it.plus,
+    }))
+    const draft: GameState & { id: string } = {
+      id: owner.id, name: owner.name, raceId: owner.raceId, classId: owner.classId,
+      lv: owner.lv, exp: owner.exp,
+      hp: owner.hp, maxHp: owner.maxHp, mp: owner.mp, maxMp: owner.maxMp,
+      atk: owner.atk, def: owner.def, spd: owner.spd,
+      str: owner.str, int: owner.int, dex: owner.dex,
+      agi: owner.agi, luk: owner.luk, vit: owner.vit,
+      unspentPoints: owner.unspentPoints,
+      gold: owner.gold,
+      inventory: nextInventory,
+      equipWeapon: owner.equipWeaponId, equipArmor: owner.equipArmorId,
+      map: owner.mapId, px: owner.px, py: owner.py, steps: owner.steps,
+      transcended: owner.transcended, classChanged: owner.classChanged,
+    }
+    const next = deriveStats(draft, { items: bundle.items })
+
+    const updated = await app.prisma.$transaction(async (tx) => {
+      await tx.inventoryItem.update({
+        where: { id: row.id }, data: { plus },
+      })
+      await tx.character.update({
+        where: { id: owner.id },
+        data: {
+          maxHp: next.maxHp, maxMp: next.maxMp,
+          hp: next.hp, mp: next.mp,
+          atk: next.atk, def: next.def, spd: next.spd,
+        },
+      })
+      return tx.inventoryItem.findUniqueOrThrow({ where: { id: row.id } })
+    })
+    await app.audit({
+      actorUserId: req.userId, action: 'inventory.set-plus',
+      targetType: 'inventoryItem', targetId: row.id,
+      payload: { characterId: owner.id, itemKey: row.itemKey, oldPlus: row.plus, newPlus: plus },
+    })
+    return reply.send({
+      inventoryItem: { id: updated.id, itemKey: updated.itemKey, qty: updated.qty, plus: updated.plus },
+    })
   })
 
   // ── Users (Slice 30) ──

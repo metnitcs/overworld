@@ -193,11 +193,11 @@ interface Store {
   battleHeal: (target: 'player' | 'enemy', amt: number) => void
   spendMp: (amt: number) => void
   // Inventory / equip
-  equip: (key: string) => void
-  unequip: (key: string) => void
-  useConsume: (key: string) => void
-  addItem: (key: string, qty?: number) => void
-  removeItem: (key: string, qty?: number) => void
+  /** Slice 47: equip/unequip target a specific InventoryItem row (gear is
+   *  per-instance now). UI clicks the row in the bag list and passes its id. */
+  equip: (inventoryItemId: string) => void
+  unequip: (slot: 'weapon' | 'armor') => void
+  useConsume: (itemKey: string) => void
   spendGold: (amt: number) => boolean
   gainGold: (amt: number) => void
   // Slice 41: shop + healer intents
@@ -205,7 +205,11 @@ interface Store {
   healFull: (npcId: string) => Promise<void>
   // Craft / enhance / class change
   craft: (resultKey: string) => boolean
-  enhance: (key: string, slot: '_w' | '_a') => Promise<void>
+  /** Slice 48: enhance now goes through a Blacksmith NPC. UI passes the
+   *  NPC id (looked up via map.npcs) + the target InventoryItem row id.
+   *  Server validates blacksmith kind + same map + row not equipped, then
+   *  charges plus-stones + gold and re-runs resolveEnhance with its own RNG. */
+  enhance: (npcId: string, inventoryItemId: string) => Promise<void>
   changeClass: (classId: string, cost: number) => boolean
   // Slice 23: primary-stat allocation
   allocateStat: (stat: 'str' | 'int' | 'dex' | 'agi' | 'luk' | 'vit', amount: number) => Promise<void>
@@ -230,10 +234,12 @@ const initialGame: GameState = {
   str: 10, int: 10, dex: 10, agi: 10, luk: 10, vit: 10,
   unspentPoints: 0,
   gold: 100,
-  inventory: { 'potion-s': 3 },
+  // Slice 47: inventory is now a per-instance list. Empty until server
+  // GET /api/character/:id hydrates it on character load — the initial
+  // value here is just a placeholder for the Zustand factory.
+  inventory: [],
   equipWeapon: null,
   equipArmor: null,
-  plus: {},
   map: 'village',
   px: 5, py: 5,
   steps: 0,
@@ -344,10 +350,10 @@ const AUTH_KEY = 'asura_online_auth_v1'
 function toSaveBody(g: GameState, expectedUpdatedAt?: string | null): SaveBody {
   const {
     name: _n, raceId: _r, classId: _c,
-    gold: _g, inventory: _i, equipWeapon: _ew, equipArmor: _ea, plus: _p,
+    gold: _g, inventory: _i, equipWeapon: _ew, equipArmor: _ea,
     ...rest
   } = g
-  void _n; void _r; void _c; void _g; void _i; void _ew; void _ea; void _p
+  void _n; void _r; void _c; void _g; void _i; void _ew; void _ea
   if (expectedUpdatedAt) return { ...rest, expectedUpdatedAt }
   return rest
 }
@@ -382,10 +388,9 @@ function forgetSync(): void {
 function mergeAfterStale(client: GameState, server: GameState): GameState {
   return {
     ...client,
-    inventory: { ...server.inventory },
+    inventory: [...server.inventory],
     equipWeapon: server.equipWeapon,
     equipArmor: server.equipArmor,
-    plus: { ...server.plus },
     gold: server.gold,
     name: server.name,
     raceId: server.raceId,
@@ -678,6 +683,9 @@ export const useGame = create<Store>()(
         } else if (tileKind === 'shop' || tileKind === 'healer') {
           // Shop modal renders both kinds — it picks the right NPC list from cache.
           setTimeout(() => get().setModal('shop'), 150)
+        } else if (tileKind === 'blacksmith') {
+          // Slice 48: Blacksmith ceremony — modal lists unequipped weapon/armor.
+          setTimeout(() => get().setModal('blacksmith'), 150)
         }
       },
 
@@ -1097,20 +1105,21 @@ export const useGame = create<Store>()(
       // Slice 39: equip/unequip now call dedicated intent endpoints —
       // server validates inventory + flips the pointer + returns the
       // freshly-derived character. No more local mutation + autosave race.
-      equip: (key) => {
+      // Slice 47: equip targets a specific InventoryItem row by id (gear
+      // is per-instance). UI sends the id of the bag row the player clicked.
+      equip: (inventoryItemId) => {
         const token = get().token
         const id = get().activeCharacterId
-        const it = get().content?.items[key]
-        if (!token || !id || !it) return
+        if (!token || !id) return
+        const row = get().game.inventory.find((r) => r.id === inventoryItemId)
+        if (!row) return
+        const it = get().content?.items[row.itemKey]
+        if (!it) return
         if (it.type !== 'weapon' && it.type !== 'armor') return
-        if ((get().game.inventory[key] || 0) < 1) {
-          get().log(`ไม่มี ${it.name} ในกระเป๋า`, 'bad')
-          return
-        }
         void (async () => {
           setSaveStatus('saving')
           try {
-            const r = await api.equipCharacter(token, id, key)
+            const r = await api.equipCharacter(token, id, inventoryItemId)
             const { id: _, updatedAt, ...gameState } = r.character
             void _
             rememberSync(id, updatedAt)
@@ -1118,7 +1127,7 @@ export const useGame = create<Store>()(
             useGame.setState({ game: next })
             lastSavedSnapshot = snapshotOf(next)
             setSaveStatus('saved')
-            get().log(`สวม ${it.name}`, 'good')
+            get().log(`สวม ${it.name}${row.plus > 0 ? ` +${row.plus}` : ''}`, 'good')
           } catch (err) {
             setSaveStatus('error')
             const msg = err instanceof ApiError && err.body && typeof err.body === 'object' && 'error' in err.body
@@ -1127,16 +1136,17 @@ export const useGame = create<Store>()(
           }
         })()
       },
-      unequip: (key) => {
+      // Slice 47: unequip takes the slot directly (the FK lookup happens
+      // server-side; UI knows which slot it's clearing).
+      unequip: (slot) => {
         const token = get().token
         const id = get().activeCharacterId
         if (!token || !id) return
         const game = get().game
-        const slot: 'weapon' | 'armor' | null =
-          game.equipWeapon === key ? 'weapon' :
-          game.equipArmor === key ? 'armor' : null
-        if (!slot) return
-        const itName = get().content?.items[key]?.name ?? key
+        const equippedId = slot === 'weapon' ? game.equipWeapon : game.equipArmor
+        const itName = equippedId
+          ? get().content?.items[game.inventory.find((r) => r.id === equippedId)?.itemKey ?? '']?.name ?? 'ของ'
+          : 'ของ'
         void (async () => {
           setSaveStatus('saving')
           try {
@@ -1159,12 +1169,15 @@ export const useGame = create<Store>()(
       },
       // Slice 40: consume now flows through the server. Heal clamp +
       // inventory decrement are atomic + cheat-proof.
+      // Slice 47: itemKey is still the natural handle here — consume rows
+      // are stackable (mat/consume), so there's at most one row per key.
       useConsume: (key) => {
         const token = get().token
         const id = get().activeCharacterId
         const it = get().content?.items[key]
         if (!token || !id || !it || it.type !== 'consume') return
-        if ((get().game.inventory[key] || 0) < 1) return
+        const row = get().game.inventory.find((r) => r.itemKey === key)
+        if (!row || row.qty < 1) return
         void (async () => {
           setSaveStatus('saving')
           try {
@@ -1185,19 +1198,10 @@ export const useGame = create<Store>()(
           }
         })()
       },
-      addItem: (key, qty = 1) => {
-        const g = { ...get().game }
-        g.inventory = { ...g.inventory }
-        g.inventory[key] = (g.inventory[key] || 0) + qty
-        set({ game: g })
-      },
-      removeItem: (key, qty = 1) => {
-        const g = { ...get().game }
-        g.inventory = { ...g.inventory }
-        g.inventory[key] = (g.inventory[key] || 0) - qty
-        if (g.inventory[key] <= 0) delete g.inventory[key]
-        set({ game: g })
-      },
+      // Slice 47: addItem / removeItem local mutators removed — all
+      // inventory writes flow through server intent endpoints (Slices 38-45)
+      // and arrive back as a full InventoryItem[] on the GameState. The
+      // last UI caller of these helpers went away in Slice 45.
       spendGold: (amt) => {
         if (get().game.gold < amt) return false
         set({ game: { ...get().game, gold: get().game.gold - amt } })
@@ -1285,16 +1289,18 @@ export const useGame = create<Store>()(
         return true
       },
 
-      // Slice 43: enhance now resolves on the server (RNG, atomic stone
-      // spend + plus update). Outcome surfaces via chat log.
-      enhance: async (key, slot) => {
+      // Slice 48: enhance gated by Blacksmith NPC. UI passes both ids.
+      // Server validates kind+map+not-equipped, charges stones + gold,
+      // and updates the target row's plus.
+      enhance: async (npcId, inventoryItemId) => {
         const token = get().token
         const id = get().activeCharacterId
         if (!token || !id) return
-        const name = get().content?.items[key]?.name ?? key
+        const row = get().game.inventory.find((r) => r.id === inventoryItemId)
+        const name = row ? (get().content?.items[row.itemKey]?.name ?? row.itemKey) : 'ของ'
         setSaveStatus('saving')
         try {
-          const r = await api.enhanceItem(token, id, key, slot)
+          const r = await api.enhanceItem(token, id, npcId, inventoryItemId)
           const { id: _, updatedAt, ...gameState } = r.character
           void _
           rememberSync(id, updatedAt)
@@ -1309,9 +1315,12 @@ export const useGame = create<Store>()(
           }
         } catch (err) {
           setSaveStatus('error')
-          if (err instanceof ApiError && err.body && typeof err.body === 'object'
-              && 'error' in err.body && (err.body as { error: string }).error === 'no-stone') {
-            get().log('💠 หินตีบวกไม่พอ', 'bad')
+          if (err instanceof ApiError && err.body && typeof err.body === 'object' && 'error' in err.body) {
+            const code = (err.body as { error: string }).error
+            if (code === 'no-stone')           get().log('💠 หินตีบวกไม่พอ', 'bad')
+            else if (code === 'no-gold')       get().log('💰 ทองไม่พอจ่ายค่าตีบวก', 'bad')
+            else if (code === 'item is equipped') get().log('ถอดของก่อนถึงจะตี+ ได้', 'bad')
+            else get().log(`ตีบวกไม่ได้: ${code}`, 'bad')
           } else {
             const msg = err instanceof Error ? err.message : String(err)
             get().log(`ตีบวกไม่ได้: ${msg}`, 'bad')

@@ -59,7 +59,7 @@ export function GameScreen() {
         <div className="flex-1 relative bg-black/5 border-r-2 border-kw-border-2 overflow-hidden">
           <PhaserGame className="w-full h-full" />
           <div className="absolute top-2 left-2 panel px-2 py-1 text-[11px] text-kw-blue-deep font-semibold">
-            ⬆⬇⬅➡ / WASD · ชนมอน = ต่อสู้ · 🌀 = วาปแมพ
+            ⬆⬇⬅➡ / WASD · 🖱 คลิกที่แมพเพื่อเดิน · ชนมอน = ต่อสู้ · 🌀 = วาปแมพ
           </div>
         </div>
 
@@ -105,7 +105,6 @@ export function GameScreen() {
               <ActionBtn icon="📊" label="สเตตัส"  color="green"   onClick={() => setModal('status')} />
               <ActionBtn icon="🎒" label="กระเป๋า" color=""        onClick={() => setModal('inventory')} />
               <ActionBtn icon="⚒"  label="คราฟ"   color="blue"    onClick={() => setModal('craft')} />
-              <ActionBtn icon="✨" label="ตีบวก" color="pink"    onClick={() => setModal('enhance')} />
               <ActionBtn icon="💊" label="ร้านค้า" color="purple"  onClick={() => setModal('shop')} />
               <ActionBtn icon="❓" label="วิธีเล่น" color=""       onClick={() => setModal('help')} />
               <ActionBtn icon="🚪" label="ออก"     color="pink"   onClick={() => setScreen('character-select')} />
@@ -216,12 +215,13 @@ function EquippedPanel() {
   const game = useGame(s => s.game)
   const items = useGame(s => s.content!.items)
   const setModal = useGame(s => s.setModal)
-  const wKey = game.equipWeapon
-  const aKey = game.equipArmor
-  const w = wKey ? items[wKey] : null
-  const a = aKey ? items[aKey] : null
-  const wPlus = wKey ? (game.plus[wKey + '_w'] || 0) : 0
-  const aPlus = aKey ? (game.plus[aKey + '_a'] || 0) : 0
+  // Slice 47: equipWeapon / equipArmor are InventoryItem.id FKs.
+  const wRow = game.equipWeapon ? game.inventory.find((r) => r.id === game.equipWeapon) : null
+  const aRow = game.equipArmor  ? game.inventory.find((r) => r.id === game.equipArmor)  : null
+  const w = wRow ? items[wRow.itemKey] : null
+  const a = aRow ? items[aRow.itemKey] : null
+  const wPlus = wRow?.plus ?? 0
+  const aPlus = aRow?.plus ?? 0
 
   return (
     <div className="panel panel-pad">

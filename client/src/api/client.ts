@@ -193,7 +193,6 @@ export interface AdminCharacterRow {
   mapId: string
   transcended: boolean
   classChanged: boolean
-  // Slice 33: full row now returned so the admin editor can pre-fill.
   str: number
   int: number
   dex: number
@@ -208,10 +207,12 @@ export interface AdminCharacterRow {
   atk: number
   def: number
   spd: number
+  /** Slice 47: FK to the equipped InventoryItem.id (was an itemKey string). */
   equipWeapon: string | null
   equipArmor: string | null
-  plus: Record<string, number>
-  inventory: Record<string, number>
+  /** Slice 47: per-instance rows. weapon/armor: 1 row per physical item with
+   *  its own `plus`; mat/consume: 1 row per (charId, itemKey) with qty. */
+  inventory: Array<{ id: string; itemKey: string; qty: number; plus: number }>
 }
 
 export interface AdminCharacterPatch {
@@ -226,7 +227,6 @@ export interface AdminCharacterPatch {
   def?: number
   spd?: number
   mapId?: string
-  // Slice 30: full character mutation surface
   str?: number
   int?: number
   dex?: number
@@ -238,10 +238,9 @@ export interface AdminCharacterPatch {
   classId?: string
   transcended?: boolean
   classChanged?: boolean
-  equipWeapon?: string | null
-  equipArmor?: string | null
-  plus?: Record<string, number>
-  inventory?: Record<string, number>
+  // Slice 47: equip + Plus + inventory mutations moved to per-row admin
+  // intent endpoints (Slice 49). Keeping them out of the patch surface
+  // means the type can't accidentally request a clobbering write.
 }
 
 // ─── Slice 30: User management + Audit log ─────────────────────────────
@@ -344,7 +343,7 @@ export interface ContentResponse {
  *  POST /change-class. */
 export type SaveBody = Omit<
   GameState,
-  'name' | 'raceId' | 'classId' | 'gold' | 'inventory' | 'equipWeapon' | 'equipArmor' | 'plus'
+  'name' | 'raceId' | 'classId' | 'gold' | 'inventory' | 'equipWeapon' | 'equipArmor'
 > & {
   expectedUpdatedAt?: string
 }
@@ -393,16 +392,17 @@ export const api = {
       method: 'POST', token,
     }),
 
-  /** Slice 39 — equip an item the character owns. Server validates inventory
-   *  + item type, points the matching slot at it, returns the freshly-derived
-   *  character. The item stays in the bag (Slice 36 pointer model). */
-  equipCharacter: (token: string, id: string, itemKey: string) =>
+  /** Slice 47 — equip a specific InventoryItem row by id. Server validates
+   *  ownership + ItemType, derives the slot, points the matching FK at the
+   *  row, returns the freshly-derived character. The row stays in the bag
+   *  list; the UI filters out rows whose id matches an equip FK. */
+  equipCharacter: (token: string, id: string, inventoryItemId: string) =>
     request<CharacterResponse>(`/api/character/${id}/equip`, {
-      method: 'POST', token, body: { itemKey },
+      method: 'POST', token, body: { inventoryItemId },
     }),
 
-  /** Slice 39 — clear the named equip slot. Safety re-adds the cleared item
-   *  to inventory if there was no row (admin-assigned slots). */
+  /** Slice 47 — clear the named equip slot. Just sets the FK to null; the
+   *  InventoryItem row is untouched (Plus preserved across re-equip). */
   unequipCharacter: (token: string, id: string, slot: 'weapon' | 'armor') =>
     request<CharacterResponse>(`/api/character/${id}/unequip`, {
       method: 'POST', token, body: { slot },
@@ -437,17 +437,20 @@ export const api = {
       method: 'POST', token, body: { recipeId },
     }),
 
-  /** Slice 43 — enhance an item. Server re-runs resolveEnhance with its
-   *  own RNG (player can't reroll). Response includes the resolved outcome
-   *  + the freshly-derived character. */
-  enhanceItem: (token: string, id: string, itemKey: string, slot: '_w' | '_a') =>
+  /** Slice 48 — enhance gated by Blacksmith NPC. Server validates the NPC
+   *  kind + same-map adjacency, rejects equipped items, and charges
+   *  plus-stones + a gold fee (enhanceGoldCost). Response includes the
+   *  resolved outcome + the freshly-derived character. */
+  enhanceItem: (token: string, id: string, npcId: string, inventoryItemId: string) =>
     request<CharacterResponse & {
       outcome: 'ok' | 'fail'
       cost: number
+      goldCost: number
       stonesConsumed: number
+      goldConsumed: number
       newPlus: number
     }>(`/api/character/${id}/enhance`, {
-      method: 'POST', token, body: { itemKey, slot },
+      method: 'POST', token, body: { npcId, inventoryItemId },
     }),
 
   /** Slice 44 — credit reward for a defeated monster. Server rolls exp,
@@ -509,6 +512,15 @@ export const api = {
     request<{ character: AdminCharacterRow }>(`/api/admin/characters/${id}`, { method: 'PUT', token, body }),
   adminDeleteCharacter: (token: string, id: string) =>
     request<{ ok: true }>(`/api/admin/characters/${id}`, { method: 'DELETE', token }),
+
+  /** Slice 49 — per-row admin Set Plus. Updates the InventoryItem's `plus`
+   *  and re-derives the owner's cached atk/def/spd so the player sees the
+   *  change immediately. Audited as `inventory.set-plus`. */
+  adminSetItemPlus: (token: string, inventoryItemId: string, plus: number) =>
+    request<{ inventoryItem: { id: string; itemKey: string; qty: number; plus: number } }>(
+      `/api/admin/inventory/${inventoryItemId}/set-plus`,
+      { method: 'POST', token, body: { plus } },
+    ),
 
   // Slice 30 — Users + Audit logs
   adminListUsers: (token: string) =>

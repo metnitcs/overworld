@@ -44,6 +44,11 @@ export default function App() {
   // etc. — those layouts produce different characters for the same key
   // (Thai 'ไ' for W, 'ห' for K…). Arrow keys are layout-independent in
   // both APIs so either works for them.
+  //
+  // Some Windows setups with Thai IME deliver keydown with e.code === ''
+  // (IME swallows the physical-key info). Fallback: also check e.key for
+  // the Thai character that the Thai-Kedmanee layout produces for W/A/S/D
+  // (ไ/ฟ/ห/ก) and their shifted forms ("/ฤ/ฆ/ฏ).
   useEffect(() => {
     // Per-step cooldown for hold-to-walk. Matches the Click-to-Walk step
     // delay (240 ms) so keyboard hold-walk and mouse-path-walk feel identical.
@@ -64,7 +69,16 @@ export default function App() {
         case 'ArrowDown':  case 'KeyS': dy =  1; break
         case 'ArrowLeft':  case 'KeyA': dx = -1; break
         case 'ArrowRight': case 'KeyD': dx =  1; break
-        default: return
+        default: {
+          // Thai-Kedmanee fallback: W=ไ"  A=ฟฤ  S=หฆ  D=กฏ
+          switch (e.key) {
+            case 'ไ': case '"': dy = -1; break
+            case 'ห': case 'ฆ': dy =  1; break
+            case 'ฟ': case 'ฤ': dx = -1; break
+            case 'ก': case 'ฏ': dx =  1; break
+            default: return
+          }
+        }
       }
       e.preventDefault()
       const now = performance.now()

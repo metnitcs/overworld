@@ -1,8 +1,9 @@
 import type { FastifyInstance } from 'fastify'
+import type { Prisma, PrismaClient } from '@prisma/client'
+import type { Character, InventoryItem as PrismaInventoryItem } from '@prisma/client'
 import { z } from 'zod'
-import type { Character, InventoryItem } from '@prisma/client'
 import {
-  deriveStats, type GameState,
+  deriveStats, type GameState, type InventoryItem, type ItemDef,
   CHARACTER_SLOT_LIMIT, TRANSCEND_LV,
   CLASS_CHANGE_LV,
   STAT_BASE, STAT_HARD_CAP,
@@ -12,6 +13,45 @@ import {
   resolveEnhance, applyExp, expForLv,
   type PrimaryStat,
 } from '@asura/shared'
+
+/** Slice 47: stack-policy helper. Weapon/armor are per-instance — always
+ *  INSERT a fresh InventoryItem row (qty=1, plus=0) so each physical item
+ *  carries its own Plus. Mat/consume stack — upsert by (characterId, itemKey).
+ *  Falls back to per-instance if the ItemDef is unknown (defensive — should
+ *  never happen because every itemKey we add originated from the catalog). */
+type Tx = Prisma.TransactionClient | PrismaClient
+async function addItem(
+  tx: Tx,
+  characterId: string,
+  itemKey: string,
+  qty: number,
+  items: Record<string, ItemDef>,
+): Promise<void> {
+  if (qty <= 0) return
+  const def = items[itemKey]
+  const stackable = def?.type === 'mat' || def?.type === 'consume'
+  if (stackable) {
+    const existing = await tx.inventoryItem.findFirst({
+      where: { characterId, itemKey },
+    })
+    if (existing) {
+      await tx.inventoryItem.update({
+        where: { id: existing.id }, data: { qty: existing.qty + qty },
+      })
+    } else {
+      await tx.inventoryItem.create({
+        data: { characterId, itemKey, qty },
+      })
+    }
+  } else {
+    // Per-instance — N rows, qty=1 each. Plus defaults to 0.
+    for (let i = 0; i < qty; i++) {
+      await tx.inventoryItem.create({
+        data: { characterId, itemKey, qty: 1, plus: 0 },
+      })
+    }
+  }
+}
 // Slice 28: race + class data lives in DB now (admin-editable). Server
 // reads it via app.contentCache instead of the static @asura/shared
 // imports. The shared package still ships RACES/CLASSES as the SEED
@@ -85,11 +125,14 @@ const changeClassSchema = z.object({
   classId: z.string(),
 })
 
-/** Slice 39: equip/unequip intent endpoints — Slice 45 will remove
- *  equipWeapon/equipArmor from the player PUT entirely, leaving these
- *  as the only path to mutate equip slots from the client. */
+/** Slice 39: equip/unequip intent endpoints — Slice 45 removed
+ *  equipWeapon/equipArmor from the player PUT entirely; these are the
+ *  only path to mutate equip slots from the client.
+ *  Slice 47: equip now takes an inventoryItemId (not an itemKey) because
+ *  inventory rows for gear are per-instance. The slot (weapon/armor) is
+ *  derived from the row's ItemDef.type. */
 const equipSchema = z.object({
-  itemKey: z.string().min(1),
+  inventoryItemId: z.string().min(1),
 })
 const unequipSchema = z.object({
   slot: z.enum(['weapon', 'armor']),
@@ -120,13 +163,15 @@ const craftSchema = z.object({
   recipeId: z.string().min(1),
 })
 
-/** Slice 43: enhance intent. `slot` is the suffix `_w` (weapon) or `_a`
- *  (armor) appended to the item key to form the plus dict key
- *  (e.g. `sword-1_w`). Server re-runs resolveEnhance with its own RNG so
- *  the player can't reroll a failed attempt by replaying the request. */
+/** Slice 43 → 47 → 48: enhance is now gated by a Blacksmith NPC.
+ *  - `inventoryItemId` targets the row to enhance (per-instance, Slice 47)
+ *  - `npcId` names the Blacksmith — server validates kind=blacksmith and
+ *    that the NPC is on the player's current map (Slice 41 adjacency rule)
+ *  - The row must NOT be equipped — Blacksmith refuses worn items (U1, Slice 48)
+ *  - Server charges plus-stones + gold (resolveEnhance includes both) */
 const enhanceSchema = z.object({
-  itemKey: z.string().min(1),
-  slot: z.enum(['_w', '_a']),
+  inventoryItemId: z.string().min(1),
+  npcId: z.string().min(1),
 })
 
 /** Slice 44: battle resolution intent. PvE combat itself remains
@@ -139,17 +184,21 @@ const battleResolveSchema = z.object({
 
 const DEFAULT_INVENTORY: Record<string, number> = { 'potion-s': 3 }
 
-/** Map a DB Character (+inventory rows) into the API shape, which mirrors the
- *  client's GameState (inventory = Record<itemKey, qty>).
- *  Slice 38: tacks on `updatedAt` (ISO) as the optimistic-concurrency token —
- *  client echoes it in the next PUT; server rejects mismatches with 409 so a
- *  player session can't clobber inventory/equip/plus/gold writes that another
- *  actor (admin GM-add, second tab) made after the last sync. */
+/** Map a DB Character (+inventory rows) into the API shape, mirroring the
+ *  client's GameState. Slice 47: inventory is now an array of per-instance
+ *  rows (id, itemKey, qty, plus). equipWeapon/equipArmor are the FK ids
+ *  pointing at the equipped InventoryItem.id; UI filters those ids out of
+ *  the bag display. The old `plus: Record<>` field is gone — Plus lives on
+ *  each row. See ADR 0003. */
 function toApiCharacter(
-  c: Character & { inventory: InventoryItem[] },
+  c: Character & { inventory: PrismaInventoryItem[] },
 ): GameState & { id: string; updatedAt: string } {
-  const inv: Record<string, number> = {}
-  for (const it of c.inventory) inv[it.itemKey] = it.qty
+  const inv: InventoryItem[] = c.inventory.map((it) => ({
+    id: it.id,
+    itemKey: it.itemKey,
+    qty: it.qty,
+    plus: it.plus,
+  }))
   return {
     id: c.id,
     updatedAt: c.updatedAt.toISOString(),
@@ -165,7 +214,6 @@ function toApiCharacter(
     atk: c.atk,
     def: c.def,
     spd: c.spd,
-    // Slice 23: primary stats round-trip 1:1.
     str: c.str,
     int: c.int,
     dex: c.dex,
@@ -175,9 +223,8 @@ function toApiCharacter(
     unspentPoints: c.unspentPoints,
     gold: c.gold,
     inventory: inv,
-    equipWeapon: c.equipWeapon,
-    equipArmor: c.equipArmor,
-    plus: c.plus as Record<string, number>,
+    equipWeapon: c.equipWeaponId,
+    equipArmor: c.equipArmorId,
     map: c.mapId,
     px: c.px,
     py: c.py,
@@ -263,10 +310,9 @@ export function registerCharacterRoutes(app: FastifyInstance): void {
       agi: STAT_BASE, luk: STAT_BASE, vit: STAT_BASE,
       unspentPoints: 0,
       gold: 100,
-      inventory: { ...DEFAULT_INVENTORY },
+      inventory: [],
       equipWeapon: null,
       equipArmor: null,
-      plus: {},
       map: 'village', px: 5, py: 5, steps: 0,
       transcended: false,
       classChanged: false,
@@ -274,6 +320,9 @@ export function registerCharacterRoutes(app: FastifyInstance): void {
     const withRace = applyRaceModifiers(baseState, starterRace.modifiers)
     const derived = deriveStats(withRace)
 
+    // Slice 47: starter potions are stackable so a single InventoryItem row
+    // with qty=DEFAULT_INVENTORY[key] is the natural seed. addItem would
+    // also work but inline create keeps the character.create call atomic.
     const created = await app.prisma.character.create({
       data: {
         userId: req.userId,
@@ -301,9 +350,6 @@ export function registerCharacterRoutes(app: FastifyInstance): void {
         px: derived.px,
         py: derived.py,
         steps: derived.steps,
-        equipWeapon: null,
-        equipArmor: null,
-        plus: {},
         transcended: false,
         classChanged: false,
         inventory: {
@@ -590,17 +636,17 @@ export function registerCharacterRoutes(app: FastifyInstance): void {
   })
 
   // ─── POST /api/character/:id/equip — Slice 39 intent endpoint ─────────────
-  // Slice 46: Transfer model (CONTEXT.md "Equipment Slot"). Item moves
-  // Inventory → Slot — decrements (or deletes) the inventory row in the
-  // same transaction as the slot pointer flip. Matches Thai 2000s-era
-  // web MMORPG convention (Ragnarok / Mu / Yulgang).
+  // Slice 47: targets an InventoryItem row by id (not itemKey). Per-instance
+  // means each weapon/armor has its own row; equip just flips the FK on the
+  // Character — the row itself stays put and keeps its Plus. UI hides any
+  // row whose id matches Character.equipWeaponId / equipArmorId.
   app.post('/api/character/:id/equip', { preHandler: app.requireAuth }, async (req, reply) => {
     const parsed = equipSchema.safeParse(req.body)
     if (!parsed.success) {
       return reply.code(400).send({ error: 'invalid input', issues: parsed.error.issues })
     }
     const { id } = req.params as { id: string }
-    const { itemKey } = parsed.data
+    const { inventoryItemId } = parsed.data
 
     const existing = await app.prisma.character.findUnique({
       where: { id }, include: { inventory: true },
@@ -608,72 +654,36 @@ export function registerCharacterRoutes(app: FastifyInstance): void {
     if (!existing || existing.userId !== req.userId) {
       return reply.code(404).send({ error: 'character not found' })
     }
+    const row = existing.inventory.find((it) => it.id === inventoryItemId)
+    if (!row) return reply.code(409).send({ error: 'inventory item not owned' })
+
     const bundle = await app.contentCache.get()
-    const item = bundle.items[itemKey]
+    const item = bundle.items[row.itemKey]
     if (!item) return reply.code(404).send({ error: 'item not found' })
     if (item.type !== 'weapon' && item.type !== 'armor') {
       return reply.code(400).send({ error: 'item is not equippable' })
     }
-    const row = existing.inventory.find((it) => it.itemKey === itemKey)
-    const ownedQty = row?.qty ?? 0
-    if (ownedQty < 1) return reply.code(409).send({ error: 'item not in inventory' })
+    const slotField = item.type === 'weapon' ? 'equipWeaponId' : 'equipArmorId'
+    const currentlyEquipped = item.type === 'weapon' ? existing.equipWeaponId : existing.equipArmorId
 
-    const slotField = item.type === 'weapon' ? 'equipWeapon' : 'equipArmor'
-    // The previously-equipped item (if any) returns to inventory in the
-    // same transaction — keeps slot semantics symmetric with unequip.
-    const previouslyEquipped = item.type === 'weapon' ? existing.equipWeapon : existing.equipArmor
-
-    // Re-equipping the same item that's already in the slot is a no-op
-    // (semantically: the slot already holds it). Return current state
-    // without mutating inventory so we don't accidentally over-decrement.
-    if (previouslyEquipped === itemKey) {
+    // Re-equipping the same row is a no-op.
+    if (currentlyEquipped === inventoryItemId) {
       return reply.send({ character: toApiCharacter(existing) })
     }
 
-    // Build the post-mutation inventory dict for deriveStats. Transfer
-    // semantics: the equipped key leaves the bag; the displaced key
-    // (if any) returns to it.
-    const invMap: Record<string, number> = {}
-    for (const it of existing.inventory) invMap[it.itemKey] = it.qty
-    invMap[itemKey] = (invMap[itemKey] ?? 0) - 1
-    if (invMap[itemKey] <= 0) delete invMap[itemKey]
-    if (previouslyEquipped) {
-      invMap[previouslyEquipped] = (invMap[previouslyEquipped] ?? 0) + 1
-    }
-
+    // Re-derive stats with the new FK in place. The inventory list doesn't
+    // change (the equipped row stays in it; UI filters by id).
     const draft: GameState & { id: string } = {
       ...toApiCharacter(existing),
-      [slotField]: itemKey,
-      inventory: invMap,
+      ...(item.type === 'weapon' ? { equipWeapon: inventoryItemId } : { equipArmor: inventoryItemId }),
     }
     const next = deriveStats(draft, { items: bundle.items })
 
     const updated = await app.prisma.$transaction(async (tx) => {
-      // 1. Decrement (or delete) the to-be-equipped item from the bag.
-      if (ownedQty <= 1) {
-        await tx.inventoryItem.delete({
-          where: { characterId_itemKey: { characterId: existing.id, itemKey } },
-        })
-      } else {
-        await tx.inventoryItem.update({
-          where: { characterId_itemKey: { characterId: existing.id, itemKey } },
-          data: { qty: ownedQty - 1 },
-        })
-      }
-      // 2. Return the displaced item to the bag (if there was one).
-      //    Re-equip of same key was caught above and short-circuited.
-      if (previouslyEquipped) {
-        await tx.inventoryItem.upsert({
-          where: { characterId_itemKey: { characterId: existing.id, itemKey: previouslyEquipped } },
-          create: { characterId: existing.id, itemKey: previouslyEquipped, qty: 1 },
-          update: { qty: { increment: 1 } },
-        })
-      }
-      // 3. Flip the slot pointer + re-cache derived columns.
       await tx.character.update({
         where: { id: existing.id },
         data: {
-          [slotField]: itemKey,
+          [slotField]: inventoryItemId,
           maxHp: next.maxHp, maxMp: next.maxMp,
           hp: next.hp, mp: next.mp,
           atk: next.atk, def: next.def, spd: next.spd,
@@ -687,8 +697,8 @@ export function registerCharacterRoutes(app: FastifyInstance): void {
   })
 
   // ─── POST /api/character/:id/unequip — Slice 39 intent endpoint ───────────
-  // Slice 46: Transfer model. Clears the slot AND returns the item to
-  // the inventory (qty +1). If the slot is already empty, no-op.
+  // Slice 47: simply clear the FK. The InventoryItem row is unchanged and
+  // its Plus is preserved (so re-equipping the same row restores +N).
   app.post('/api/character/:id/unequip', { preHandler: app.requireAuth }, async (req, reply) => {
     const parsed = unequipSchema.safeParse(req.body)
     if (!parsed.success) {
@@ -703,23 +713,16 @@ export function registerCharacterRoutes(app: FastifyInstance): void {
     if (!existing || existing.userId !== req.userId) {
       return reply.code(404).send({ error: 'character not found' })
     }
-    const slotField = slot === 'weapon' ? 'equipWeapon' : 'equipArmor'
-    const cleared = slot === 'weapon' ? existing.equipWeapon : existing.equipArmor
+    const slotField = slot === 'weapon' ? 'equipWeaponId' : 'equipArmorId'
+    const cleared = slot === 'weapon' ? existing.equipWeaponId : existing.equipArmorId
     if (cleared === null) {
       return reply.send({ character: toApiCharacter(existing) }) // no-op
     }
     const bundle = await app.contentCache.get()
 
-    // Build post-mutation inventory dict for deriveStats: the cleared
-    // item returns to the bag.
-    const invMap: Record<string, number> = {}
-    for (const it of existing.inventory) invMap[it.itemKey] = it.qty
-    invMap[cleared] = (invMap[cleared] ?? 0) + 1
-
     const draft: GameState & { id: string } = {
       ...toApiCharacter(existing),
-      [slotField]: null,
-      inventory: invMap,
+      ...(slot === 'weapon' ? { equipWeapon: null } : { equipArmor: null }),
     }
     const next = deriveStats(draft, { items: bundle.items })
 
@@ -732,11 +735,6 @@ export function registerCharacterRoutes(app: FastifyInstance): void {
           hp: next.hp, mp: next.mp,
           atk: next.atk, def: next.def, spd: next.spd,
         },
-      })
-      await tx.inventoryItem.upsert({
-        where: { characterId_itemKey: { characterId: existing.id, itemKey: cleared } },
-        create: { characterId: existing.id, itemKey: cleared, qty: 1 },
-        update: { qty: { increment: 1 } },
       })
       return tx.character.findUniqueOrThrow({
         where: { id: existing.id }, include: { inventory: true },
@@ -776,19 +774,19 @@ export function registerCharacterRoutes(app: FastifyInstance): void {
     const newHp = item.heal ? Math.min(existing.maxHp, existing.hp + item.heal) : existing.hp
     const newMp = item.healMp ? Math.min(existing.maxMp, existing.mp + item.healMp) : existing.mp
 
+    // Slice 47: row.id is the stable handle now that (characterId, itemKey)
+    // is no longer unique. mat/consume still stack, so there's at most one
+    // row per itemKey for a consume — `row` from findFirst-like above is fine.
     const updated = await app.prisma.$transaction(async (tx) => {
       await tx.character.update({
         where: { id: existing.id },
         data: { hp: newHp, mp: newMp },
       })
       if (row.qty <= 1) {
-        await tx.inventoryItem.delete({
-          where: { characterId_itemKey: { characterId: existing.id, itemKey } },
-        })
+        await tx.inventoryItem.delete({ where: { id: row.id } })
       } else {
         await tx.inventoryItem.update({
-          where: { characterId_itemKey: { characterId: existing.id, itemKey } },
-          data: { qty: row.qty - 1 },
+          where: { id: row.id }, data: { qty: row.qty - 1 },
         })
       }
       return tx.character.findUniqueOrThrow({
@@ -829,16 +827,14 @@ export function registerCharacterRoutes(app: FastifyInstance): void {
       return reply.code(409).send({ error: 'insufficient gold' })
     }
 
+    // Slice 47: addItem chooses stack-vs-instance based on ItemType.
+    const bundle = await app.contentCache.get()
     const updated = await app.prisma.$transaction(async (tx) => {
       await tx.character.update({
         where: { id: existing.id },
         data: { gold: existing.gold - totalCost },
       })
-      await tx.inventoryItem.upsert({
-        where: { characterId_itemKey: { characterId: existing.id, itemKey } },
-        create: { characterId: existing.id, itemKey, qty },
-        update: { qty: { increment: qty } },
-      })
+      await addItem(tx, existing.id, itemKey, qty, bundle.items)
       return tx.character.findUniqueOrThrow({
         where: { id: existing.id }, include: { inventory: true },
       })
@@ -913,36 +909,36 @@ export function registerCharacterRoutes(app: FastifyInstance): void {
     if (existing.gold < recipe.gold) {
       return reply.code(409).send({ error: 'insufficient gold' })
     }
-    const invMap = new Map(existing.inventory.map((it) => [it.itemKey, it.qty]))
+    // Build a (itemKey → row) map for mat consumption. Mats are always
+    // stackable types so there is at most one row per itemKey. Use the row
+    // id for decrement now that (characterId, itemKey) is no longer unique.
+    const matRows = new Map(existing.inventory.map((it) => [it.itemKey, it]))
     for (const m of recipe.mats) {
-      if ((invMap.get(m.itemId) ?? 0) < m.qty) {
+      const r = matRows.get(m.itemId)
+      if (!r || r.qty < m.qty) {
         return reply.code(409).send({ error: `insufficient mat: ${m.itemId}` })
       }
     }
 
+    const bundle = await app.contentCache.get()
     const updated = await app.prisma.$transaction(async (tx) => {
       await tx.character.update({
         where: { id: existing.id },
         data: { gold: existing.gold - recipe.gold },
       })
       for (const m of recipe.mats) {
-        const curQty = invMap.get(m.itemId) ?? 0
-        if (curQty <= m.qty) {
-          await tx.inventoryItem.delete({
-            where: { characterId_itemKey: { characterId: existing.id, itemKey: m.itemId } },
-          })
+        const r = matRows.get(m.itemId)!
+        if (r.qty <= m.qty) {
+          await tx.inventoryItem.delete({ where: { id: r.id } })
         } else {
           await tx.inventoryItem.update({
-            where: { characterId_itemKey: { characterId: existing.id, itemKey: m.itemId } },
-            data: { qty: curQty - m.qty },
+            where: { id: r.id }, data: { qty: r.qty - m.qty },
           })
         }
       }
-      await tx.inventoryItem.upsert({
-        where: { characterId_itemKey: { characterId: existing.id, itemKey: recipeId } },
-        create: { characterId: existing.id, itemKey: recipeId, qty: 1 },
-        update: { qty: { increment: 1 } },
-      })
+      // Slice 47: craft result is usually a weapon/armor — addItem creates
+      // a fresh per-instance row at plus=0.
+      await addItem(tx, existing.id, recipeId, 1, bundle.items)
       return tx.character.findUniqueOrThrow({
         where: { id: existing.id }, include: { inventory: true },
       })
@@ -961,7 +957,7 @@ export function registerCharacterRoutes(app: FastifyInstance): void {
       return reply.code(400).send({ error: 'invalid input', issues: parsed.error.issues })
     }
     const { id } = req.params as { id: string }
-    const { itemKey, slot } = parsed.data
+    const { inventoryItemId, npcId } = parsed.data
 
     const existing = await app.prisma.character.findUnique({
       where: { id }, include: { inventory: true },
@@ -969,50 +965,72 @@ export function registerCharacterRoutes(app: FastifyInstance): void {
     if (!existing || existing.userId !== req.userId) {
       return reply.code(404).send({ error: 'character not found' })
     }
+    // Slice 48: ceremony — must be at a Blacksmith on the current map.
+    const npc = await app.prisma.npc.findUnique({ where: { id: npcId } })
+    if (!npc || npc.kind !== 'blacksmith' || npc.mapId !== existing.mapId) {
+      return reply.code(404).send({ error: 'blacksmith not reachable from current map' })
+    }
+    // Slice 47: target row owned by this character.
+    const target = existing.inventory.find((it) => it.id === inventoryItemId)
+    if (!target) return reply.code(409).send({ error: 'inventory item not owned' })
+
     const bundle = await app.contentCache.get()
-    const item = bundle.items[itemKey]
+    const item = bundle.items[target.itemKey]
     if (!item) return reply.code(404).send({ error: 'item not found' })
-    // Slot must match item type — _w only for weapons, _a only for armor.
-    if (slot === '_w' && item.type !== 'weapon') {
-      return reply.code(400).send({ error: 'slot _w requires a weapon' })
+    if (item.type !== 'weapon' && item.type !== 'armor') {
+      return reply.code(400).send({ error: 'item is not enhanceable' })
     }
-    if (slot === '_a' && item.type !== 'armor') {
-      return reply.code(400).send({ error: 'slot _a requires armor' })
+    // Slice 48: Blacksmith refuses equipped items (U1). The player must
+    // unequip first — symmetric with the "ขอตี+ ตอนถอด" mental model.
+    if (target.id === existing.equipWeaponId || target.id === existing.equipArmorId) {
+      return reply.code(409).send({ error: 'item is equipped' })
     }
-    const plus = existing.plus as Record<string, number>
-    const cur = plus[itemKey + slot] ?? 0
-    const stones = existing.inventory.find((it) => it.itemKey === 'plus-stone')?.qty ?? 0
 
-    const result = resolveEnhance(cur, stones, Math.random)
+    const cur = target.plus
+    const stoneRow = existing.inventory.find((it) => it.itemKey === 'plus-stone')
+    const stones = stoneRow?.qty ?? 0
+
+    const result = resolveEnhance(cur, stones, existing.gold, Math.random)
     if (result.outcome === 'no-stone') {
-      return reply.code(409).send({ error: 'no-stone', cost: result.cost })
+      return reply.code(409).send({ error: 'no-stone', cost: result.cost, goldCost: result.goldCost })
+    }
+    if (result.outcome === 'no-gold') {
+      return reply.code(409).send({ error: 'no-gold', cost: result.cost, goldCost: result.goldCost })
     }
 
-    const newPlus = { ...plus, [itemKey + slot]: result.newPlus }
-    // Re-derive stats so atk/def reflect the new plus level (the +
-    // formulas live in deriveStats with the items catalog).
+    // Re-derive stats so atk/def reflect the new plus. Since the target is
+    // guaranteed unequipped here, deriveStats won't actually read it — but
+    // we still feed it the bumped inventory so the helper is consistent.
+    const updatedInventory: InventoryItem[] = existing.inventory.map((it) =>
+      it.id === target.id ? { id: it.id, itemKey: it.itemKey, qty: it.qty, plus: result.newPlus } : { id: it.id, itemKey: it.itemKey, qty: it.qty, plus: it.plus },
+    )
     const draft: GameState & { id: string } = {
       ...toApiCharacter(existing),
-      plus: newPlus,
+      inventory: updatedInventory,
+      gold: existing.gold - result.goldConsumed,
     }
     const next = deriveStats(draft, { items: bundle.items })
 
     const updated = await app.prisma.$transaction(async (tx) => {
+      // Spend stones from the stack row by id.
       const newStoneQty = stones - result.stonesConsumed
-      if (newStoneQty <= 0) {
-        await tx.inventoryItem.deleteMany({
-          where: { characterId: existing.id, itemKey: 'plus-stone' },
-        })
-      } else {
-        await tx.inventoryItem.update({
-          where: { characterId_itemKey: { characterId: existing.id, itemKey: 'plus-stone' } },
-          data: { qty: newStoneQty },
-        })
+      if (stoneRow) {
+        if (newStoneQty <= 0) {
+          await tx.inventoryItem.delete({ where: { id: stoneRow.id } })
+        } else {
+          await tx.inventoryItem.update({
+            where: { id: stoneRow.id }, data: { qty: newStoneQty },
+          })
+        }
       }
+      // Update the target row's plus.
+      await tx.inventoryItem.update({
+        where: { id: target.id }, data: { plus: result.newPlus },
+      })
       await tx.character.update({
         where: { id: existing.id },
         data: {
-          plus: newPlus,
+          gold: existing.gold - result.goldConsumed,
           maxHp: next.maxHp, maxMp: next.maxMp,
           hp: next.hp, mp: next.mp,
           atk: next.atk, def: next.def, spd: next.spd,
@@ -1026,7 +1044,9 @@ export function registerCharacterRoutes(app: FastifyInstance): void {
       character: toApiCharacter(updated),
       outcome: result.outcome,
       cost: result.cost,
+      goldCost: result.goldCost,
       stonesConsumed: result.stonesConsumed,
+      goldConsumed: result.goldConsumed,
       newPlus: result.newPlus,
     })
   })
@@ -1063,7 +1083,9 @@ export function registerCharacterRoutes(app: FastifyInstance): void {
     if (monster.drops) {
       for (const d of monster.drops) {
         if (Math.random() < d.chance) {
-          const qty = d.minQty + Math.floor(Math.random() * (d.maxQty - d.minQty + 1))
+          const minQ = d.minQty ?? 1
+          const maxQ = d.maxQty ?? 1
+          const qty = minQ + Math.floor(Math.random() * (maxQ - minQ + 1))
           for (let i = 0; i < qty; i++) dropList.push(d.item)
         }
       }
@@ -1113,16 +1135,13 @@ export function registerCharacterRoutes(app: FastifyInstance): void {
           atk: next.atk, def: next.def, spd: next.spd,
         },
       })
-      // Group drops by key and upsert qty (handles duplicates from
-      // multi-drop tables or repeated drops in one fight).
+      // Slice 47: group drops by key and call addItem — stackable types
+      // bump qty on the existing row; weapon/armor INSERT one row per drop
+      // so each instance carries its own (initially 0) Plus.
       const dropQty: Record<string, number> = {}
       for (const k of dropList) dropQty[k] = (dropQty[k] ?? 0) + 1
       for (const [itemKey, qty] of Object.entries(dropQty)) {
-        await tx.inventoryItem.upsert({
-          where: { characterId_itemKey: { characterId: existing.id, itemKey } },
-          create: { characterId: existing.id, itemKey, qty },
-          update: { qty: { increment: qty } },
-        })
+        await addItem(tx, existing.id, itemKey, qty, bundle.items)
       }
       return tx.character.findUniqueOrThrow({
         where: { id: existing.id }, include: { inventory: true },

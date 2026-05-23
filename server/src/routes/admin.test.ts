@@ -593,8 +593,11 @@ describe('admin audit log (Slice 30)', () => {
   })
 })
 
-describe('admin character (Slice 30 deep editor)', () => {
-  it('PUT /api/admin/characters/:id can edit primary stats + race/class + flags + inventory', async () => {
+describe('admin character (Slice 30 deep editor, Slice 47 scalar-only)', () => {
+  // Slice 47: PUT /api/admin/characters/:id no longer accepts inventory /
+  // plus / equipWeapon / equipArmor — those flow through per-row admin
+  // endpoints in Slice 49. The scalar update path is unchanged.
+  it('PUT /api/admin/characters/:id edits primary stats + race/class + flags', async () => {
     const adminToken = await registerAndGetToken('test_admin')
     const userToken = await registerAndGetToken('test_charowner')
     const created = await app.inject({
@@ -610,9 +613,6 @@ describe('admin character (Slice 30 deep editor)', () => {
       payload: {
         lv: 50, str: 25, vit: 30,
         raceId: 'mara', transcended: true,
-        equipWeapon: 'sword-1',
-        plus: { 'sword-1_w': 3 },
-        inventory: { 'potion-s': 5, 'silk': 10 },
       },
     })
     expect(res.statusCode).toBe(200)
@@ -623,9 +623,146 @@ describe('admin character (Slice 30 deep editor)', () => {
     expect(row?.str).toBe(25)
     expect(row?.raceId).toBe('mara')
     expect(row?.transcended).toBe(true)
-    expect(row?.equipWeapon).toBe('sword-1')
-    const inv = row?.inventory.reduce((a, i) => ({ ...a, [i.itemKey]: i.qty }), {} as Record<string, number>)
-    expect(inv).toEqual({ 'potion-s': 5, 'silk': 10 })
+  })
+
+  // Slice 49: admin PUT re-derives cached atk/def/spd when primary stats
+  // (or lv / race / class) change. Without this, the GM's edit would only
+  // surface to the player after the next intent endpoint call.
+  it('Slice 49: re-derives cached atk/def/spd when primary stats change', async () => {
+    const adminToken = await registerAndGetToken('test_admin')
+    const userToken = await registerAndGetToken('test_charowner_redrv')
+    const created = await app.inject({
+      method: 'POST', url: '/api/character',
+      headers: { authorization: `Bearer ${userToken}` },
+      payload: { name: 'Buff' },
+    })
+    const cid = (created.json() as { character: { id: string } }).character.id
+    const before = await prisma.character.findUniqueOrThrow({ where: { id: cid } })
+
+    // Bump STR from 10 → 50. deriveStats: pAtk = STR*2 + floor((lv-1)*1.5)
+    // → so atk should jump by (50-10)*2 = 80.
+    await app.inject({
+      method: 'PUT', url: `/api/admin/characters/${cid}`,
+      headers: { authorization: `Bearer ${adminToken}` },
+      payload: { str: 50 },
+    })
+    const after = await prisma.character.findUniqueOrThrow({ where: { id: cid } })
+    expect(after.str).toBe(50)
+    expect(after.atk).toBe(before.atk + 80)
+  })
+})
+
+describe('Slice 49 — POST /api/admin/inventory/:itemId/set-plus', () => {
+  it('updates the row\'s plus + re-derives owner\'s atk when the row is equipped', async () => {
+    const adminToken = await registerAndGetToken('test_admin')
+    const userToken = await registerAndGetToken('test_charowner_setp')
+    const created = await app.inject({
+      method: 'POST', url: '/api/character',
+      headers: { authorization: `Bearer ${userToken}` },
+      payload: { name: 'SP' },
+    })
+    const cid = (created.json() as { character: { id: string } }).character.id
+    // Stock a weapon and equip it.
+    const sword = await prisma.inventoryItem.create({
+      data: { characterId: cid, itemKey: 'sword-1', qty: 1 },
+    })
+    await app.inject({
+      method: 'POST', url: `/api/character/${cid}/equip`,
+      headers: { authorization: `Bearer ${userToken}` },
+      payload: { inventoryItemId: sword.id },
+    })
+    const atkBefore = (await prisma.character.findUniqueOrThrow({ where: { id: cid } })).atk
+
+    // Bump plus to +5 via the admin intent. sword-1 weapon +N → +3 atk/level.
+    const res = await app.inject({
+      method: 'POST', url: `/api/admin/inventory/${sword.id}/set-plus`,
+      headers: { authorization: `Bearer ${adminToken}` },
+      payload: { plus: 5 },
+    })
+    expect(res.statusCode).toBe(200)
+    const body = res.json() as { inventoryItem: { plus: number } }
+    expect(body.inventoryItem.plus).toBe(5)
+
+    const after = await prisma.character.findUniqueOrThrow({ where: { id: cid } })
+    expect(after.atk).toBe(atkBefore + 5 * 3)
+
+    // Audit row exists with the action name + old/new plus.
+    const audit = await prisma.auditLog.findFirst({
+      where: { action: 'inventory.set-plus', targetId: sword.id },
+      orderBy: { createdAt: 'desc' },
+    })
+    expect(audit).toBeDefined()
+    expect((audit?.payload as { newPlus: number; oldPlus: number }).newPlus).toBe(5)
+    expect((audit?.payload as { newPlus: number; oldPlus: number }).oldPlus).toBe(0)
+  })
+
+  it('rejects plus outside 0..10 with 400', async () => {
+    const adminToken = await registerAndGetToken('test_admin')
+    const userToken = await registerAndGetToken('test_charowner_setp_bad')
+    const created = await app.inject({
+      method: 'POST', url: '/api/character',
+      headers: { authorization: `Bearer ${userToken}` },
+      payload: { name: 'BD' },
+    })
+    const cid = (created.json() as { character: { id: string } }).character.id
+    const sword = await prisma.inventoryItem.create({
+      data: { characterId: cid, itemKey: 'sword-1', qty: 1 },
+    })
+    const res = await app.inject({
+      method: 'POST', url: `/api/admin/inventory/${sword.id}/set-plus`,
+      headers: { authorization: `Bearer ${adminToken}` },
+      payload: { plus: 11 },
+    })
+    expect(res.statusCode).toBe(400)
+  })
+
+  it('rejects setting plus on a non-gear item (400) — potion', async () => {
+    const adminToken = await registerAndGetToken('test_admin')
+    const userToken = await registerAndGetToken('test_charowner_setp_potion')
+    const created = await app.inject({
+      method: 'POST', url: '/api/character',
+      headers: { authorization: `Bearer ${userToken}` },
+      payload: { name: 'PP' },
+    })
+    const cid = (created.json() as { character: { id: string } }).character.id
+    const potionRow = await prisma.inventoryItem.findFirstOrThrow({
+      where: { characterId: cid, itemKey: 'potion-s' },
+    })
+    const res = await app.inject({
+      method: 'POST', url: `/api/admin/inventory/${potionRow.id}/set-plus`,
+      headers: { authorization: `Bearer ${adminToken}` },
+      payload: { plus: 3 },
+    })
+    expect(res.statusCode).toBe(400)
+  })
+
+  it('returns 404 for an unknown row id', async () => {
+    const adminToken = await registerAndGetToken('test_admin')
+    const res = await app.inject({
+      method: 'POST', url: '/api/admin/inventory/no-such-id/set-plus',
+      headers: { authorization: `Bearer ${adminToken}` },
+      payload: { plus: 3 },
+    })
+    expect(res.statusCode).toBe(404)
+  })
+
+  it('non-admin user is rejected with 403', async () => {
+    const userToken = await registerAndGetToken('test_not_admin_setp')
+    const created = await app.inject({
+      method: 'POST', url: '/api/character',
+      headers: { authorization: `Bearer ${userToken}` },
+      payload: { name: 'NA' },
+    })
+    const cid = (created.json() as { character: { id: string } }).character.id
+    const sword = await prisma.inventoryItem.create({
+      data: { characterId: cid, itemKey: 'sword-1', qty: 1 },
+    })
+    const res = await app.inject({
+      method: 'POST', url: `/api/admin/inventory/${sword.id}/set-plus`,
+      headers: { authorization: `Bearer ${userToken}` },
+      payload: { plus: 3 },
+    })
+    expect(res.statusCode).toBe(403)
   })
 })
 

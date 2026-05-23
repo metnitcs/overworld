@@ -58,16 +58,32 @@ Tier of a Monster: `normal` (standard spawn pool), `elite` (rarer spawn, higher 
 Visual tier of an Item: `common` / `rare` / `epic` / `legendary`. Used only for UI presentation (border colour, label). Does **not** gate drops or pricing — those are explicit per MonsterDrop and per ShopItem.
 
 **NPC**:
-Non-player character placed at a coordinate on a Map. Has a kind: `shop` (sells ShopItems), `healer` (restores HP/MP for gold), `quest` (placeholder; not yet implemented).
+Non-player character placed at a coordinate on a Map. Has a kind: `shop` (sells ShopItems), `healer` (restores HP/MP for gold), `blacksmith` (gates Enhance — see Blacksmith), `quest` (placeholder; not yet implemented).
 
 **Inventory**:
-The Character's bag of Items they currently hold but are not wearing. Stored as `InventoryItem` rows (one per (characterId, itemKey) pair with a qty). Items that are equipped are **not** in the Inventory — see Equipment Slot.
+The Character's bag of Items they currently hold but are not wearing. Stored as `InventoryItem` rows. Stack policy depends on ItemType: `weapon` / `armor` are **per-instance** (one row = one physical item, `qty` always 1, carries its own Plus level); `mat` / `consume` are **stackable** (one row per (characterId, itemKey) pair with `qty`). Items that are equipped are **not** shown in the Inventory list — see Equipment Slot.
 _Avoid_: "bag" alone (ambiguous with UI elements), "items" alone.
 
+**Inventory Item**:
+A single row in `InventoryItem`, the canonical entity for "a thing the Character owns." Has its own `id`. For weapon/armor this id is the per-instance identity that survives equip/unequip and carries the item's Plus level. For mat/consume, the id is incidental — those rows are addressed by (characterId, itemKey).
+_Avoid_: "item slot" (overloaded with Equipment Slot), "stack" (only meaningful for mat/consume).
+
 **Equipment Slot**:
-A named slot on the Character that holds at most one equipped Item: currently `equipWeapon` and `equipArmor`. **Transfer model**: when an Item is equipped, it moves from Inventory → Slot (and disappears from the Inventory list). When unequipped, it moves Slot → Inventory. A Slot never points to an Item that is also still in the Inventory.
-_Avoid_: "equip pointer" — that was the rejected Slice 36 model where the Item stayed in the bag while equipped.
-_History_: Slice 33 introduced Transfer. Slice 36 reverted to a Pointer model (Demon-Online style). Slice 46+ returns to Transfer because (a) Thai 2000s-era web MMORPG players expect it (Ragnarok/Mu/12Sky/Yulgang) and (b) the duplicated "still in bag while equipped" entry was a recurring source of player confusion.
+A named slot on the Character that holds at most one equipped Inventory Item: currently `equipWeapon` and `equipArmor`. Each slot is a foreign key from `Character` to `InventoryItem.id`. **Transfer model is logical, not physical**: the equipped Inventory Item stays in the `InventoryItem` table; the Inventory list filters out any row whose id appears in an Equipment Slot, so the player never sees the same item in two places. Unequipping = clearing the FK; the item's `id` and Plus level are unchanged.
+_Avoid_: "equip pointer" — that was the rejected Slice 36 model where an item shown as equipped was also still listed in the bag.
+_History_: Slice 33 introduced Transfer. Slice 36 reverted to a Pointer model (Demon-Online style). Slice 46 returned to Transfer (physical move). Slice 47+ refines this further: per-instance identity for gear forces the slot to reference an Inventory Item id (not an itemKey), so "transfer" becomes a display rule rather than a row movement — the item's identity and Plus level can't be lost in transit.
+
+**Plus**:
+A non-negative integer (0..10) attached to a single weapon or armor Inventory Item, representing how many successful Enhance attempts it has accumulated. Each Plus level adds flat stats (weapon: +3 ATK per level; armor: +2 DEF per level). Mat and consume items never carry a Plus. Two Inventory Items of the same itemKey can have different Plus values — that is the whole reason gear is per-instance.
+_Avoid_: "+level" (no leading symbol in prose), "refine level" (RO term we don't use), "upgrade" (overloaded with class/race progression).
+
+**Enhance**:
+The act of attempting to raise an Inventory Item's Plus by 1. Resolved by `resolveEnhance` (pure, server-runs-the-RNG). Costs plus-stones (`1 + floor(cur/2)`) and a gold fee (scales with current Plus). On success: `+1`. On failure at `cur >= 5`: `-1`. Stones and gold are consumed on both success and failure, never when the player can't afford. Always gated by a Blacksmith NPC — the Enhance modal is opened by interacting with one and lists only **unequipped** weapon/armor.
+_Avoid_: "upgrade", "refine", "+ตี" without context.
+
+**Blacksmith**:
+A new NpcKind that gates Enhance. The Blacksmith refuses to work on equipped items — the Character must unequip first. Listed alongside `shop`, `healer`, and `quest` as the fourth NpcKind. Placed on a Map like any other NPC.
+_Avoid_: "smith", "enhancer", "refiner".
 
 **Item Stat**:
 A field on an ItemDef that contributes to a Character's combat stats when the Item is equipped. Which stats fold in depends on the **slot the Item occupies**, not which fields the ItemDef carries:

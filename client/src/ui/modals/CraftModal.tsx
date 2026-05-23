@@ -19,10 +19,14 @@ export function CraftModal() {
       <div className="text-xs text-kw-text-dim px-1">
         ใช้วัตถุดิบและทอง สร้างอาวุธหรือเกราะใหม่ (บางสูตรจำกัดอาชีพ)
       </div>
+      {/* Slice 47: mat lookup goes through `inventory[]` rather than a
+          Record. Mats are stackable so there's at most one row per key. */}
       {recipes.filter(r => !r.classReq || r.classReq.includes(game.classId)).map(rec => {
         const result = items[rec.result]
         if (!result) return null
-        const haveMats = Object.entries(rec.mats).every(([k, n]) => (game.inventory[k] || 0) >= n)
+        const ownedQty = (k: string) =>
+          game.inventory.find((r) => r.itemKey === k)?.qty ?? 0
+        const haveMats = Object.entries(rec.mats).every(([k, n]) => ownedQty(k) >= n)
         const haveGold = game.gold >= rec.gold
         const can = haveMats && haveGold
         const stat = result.atk ? `ATK +${result.atk}` : result.def ? `DEF +${result.def}` : result.desc
@@ -35,7 +39,7 @@ export function CraftModal() {
               <div className="text-kw-orange">{stat}</div>
               <div className="flex flex-wrap gap-x-2 text-[10px] mt-0.5">
                 {Object.entries(rec.mats).map(([k, n]) => {
-                  const have = game.inventory[k] || 0
+                  const have = ownedQty(k)
                   const mat = items[k]
                   if (!mat) return null
                   return (

@@ -44,21 +44,27 @@ export function deriveCombatStats(g: GameState, opts: DeriveOptions = {}): Deriv
   const dodge = Math.floor(g.lv * 0.5 + g.agi * 0.4)
   const crit  = Math.min(50, Math.floor(g.luk * 0.3))
 
-  // Equipment + enhance bonuses fold into the matching combat stats.
-  // Slice 24 fix: weapons can carry a `matk` field (staves) — both atk
-  // and matk fold in, and enhance adds +3 per plus to the matching stat
-  // (matk plus bonus only when the weapon actually has matk).
+  // Slice 47: equipWeapon / equipArmor are InventoryItem.id FKs.
+  // Look up the row in `g.inventory[]` to get its itemKey + plus.
+  // (Mat/consume rows are also in the array but never appear here because
+  // the equip endpoint guards `ItemType` before setting the FK.)
   if (g.equipWeapon) {
-    const it = items[g.equipWeapon]
-    const plus = g.plus[g.equipWeapon + '_w'] || 0
-    pAtk += (it?.atk  || 0) + plus * 3
-    mAtk += (it?.matk || 0) + (it?.matk ? plus * 3 : 0)
+    const row = g.inventory.find(i => i.id === g.equipWeapon)
+    if (row) {
+      const it = items[row.itemKey]
+      const plus = row.plus
+      pAtk += (it?.atk  || 0) + plus * 3
+      mAtk += (it?.matk || 0) + (it?.matk ? plus * 3 : 0)
+    }
   }
   if (g.equipArmor) {
-    const it = items[g.equipArmor]
-    const plus = g.plus[g.equipArmor + '_a'] || 0
-    pDef += (it?.def  || 0) + plus * 2
-    mDef += (it?.matk || 0)
+    const row = g.inventory.find(i => i.id === g.equipArmor)
+    if (row) {
+      const it = items[row.itemKey]
+      const plus = row.plus
+      pDef += (it?.def  || 0) + plus * 2
+      mDef += (it?.matk || 0)
+    }
   }
 
   return { maxHp, maxMp, pAtk, mAtk, pDef, mDef, spd, acc, dodge, crit }

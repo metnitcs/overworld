@@ -15,9 +15,9 @@ function gs(overrides: Partial<GameState> = {}): GameState {
     str: STAT_BASE, int: STAT_BASE, dex: STAT_BASE,
     agi: STAT_BASE, luk: STAT_BASE, vit: STAT_BASE,
     unspentPoints: 0,
-    inventory: {}, equipWeapon: null, equipArmor: null, plus: {},
+    inventory: [], equipWeapon: null, equipArmor: null,
     map: 'village', px: 0, py: 0, steps: 0,
-    transcended: false,
+    transcended: false, classChanged: false,
     ...overrides,
   }
 }

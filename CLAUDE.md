@@ -82,6 +82,28 @@ npm test               # รัน test ทั้ง shared + client + server
 - ก่อนแก้ Phaser scene ตรวจ subscribe lifecycle — อย่าลืม unsubscribe
 - ถ้า task ใหญ่หลายขั้น → ใช้ TodoWrite track ความคืบหน้า
 
+### 7. Obsidian wiki — read first, log after
+
+Wiki vault อยู่ที่ [vault/wiki/](vault/wiki/) เป็น single source of truth สำหรับ project knowledge ข้ามเซสชัน
+
+**ก่อนเริ่มงานทุกครั้ง (read):**
+
+1. อ่าน [vault/wiki/hot.md](vault/wiki/hot.md) ก่อน — ~500 คำ รวมสถานะปัจจุบัน
+2. ถ้าไม่พอ อ่าน [vault/wiki/index.md](vault/wiki/index.md) — master catalog
+3. drill ลึกตามต้องการใน `vault/wiki/<folder>/` (decisions, slices, modules, flows, concepts, …)
+4. คำตอบที่อ่านได้ใน wiki — อย่า grep โค้ดซ้ำ
+
+**หลังทำงานที่มีนัยสำคัญ (write):**
+
+- เสร็จ slice / แก้บั๊กราก / grilling decision / ADR ใหม่ / port logic → **append entry ใน [vault/wiki/log.md](vault/wiki/log.md) (newest บนสุด)** + อัพ/สร้างหน้าใน folder ที่เหมาะ
+- ใช้ skill `claude-obsidian:save` สำหรับ save บทสนทนา/insight, `claude-obsidian:wiki-ingest` สำหรับเอกสารใน `.raw/`
+- frontmatter ใช้ flat YAML (type/title/status/created/updated/tags) wikilink เป็น `[[ชื่อไฟล์]]` (ไม่ใส่ path)
+
+**Sync กับ docs ใน repo root:**
+
+- `CONTEXT.md` (glossary) และ `docs/adr/` ยังเป็น source ของ project — wiki เป็น navigation layer ที่ link ออกไป
+- เปลี่ยน ADR / glossary ครั้งใหญ่ → อัพ `vault/wiki/decisions/` หรือ `vault/wiki/concepts/` ที่ชี้กลับมาด้วย
+
 ## สิ่งที่ห้ามทำ
 - ห้ามสร้าง component/logic ซ้ำกับที่มีอยู่ใน shared หรือ ui/
 - ห้าม commit โค้ดที่ไม่มี test รองรับ (สำหรับ function ใหม่)
@@ -89,6 +111,7 @@ npm test               # รัน test ทั้ง shared + client + server
 - ห้ามแก้ไฟล์ใน `legacy/`
 - ห้ามแก้ไฟล์ใน `vault/.raw/` (source documents)
 - ห้าม commit ถ้า user ไม่ได้บอกให้ commit
+- ห้ามข้าม wiki — เริ่มงานต้องอ่าน hot.md/index.md ก่อน, เสร็จงานต้อง log
 
 ## ถ้าไม่แน่ใจ
 ถามก่อน อย่าเดา การ research จาก docs/web ทำได้และส่งเสริมให้ทำเพื่อความแม่นยำ

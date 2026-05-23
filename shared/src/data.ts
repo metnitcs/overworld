@@ -326,6 +326,17 @@ export const NPCS: Record<string, NpcDef> = {
     x: 8, y: 3,
     kind: 'healer',
   },
+  // Slice 48: Blacksmith NPC gates the Enhance ceremony. Refuses equipped
+  // items; charges plus-stones + a gold fee per attempt. See ADR 0003 +
+  // CONTEXT.md "Blacksmith".
+  'village-blacksmith': {
+    id: 'village-blacksmith',
+    name: 'ช่างตีเหล็กประจำหมู่บ้าน',
+    emoji: '🛠️',
+    mapId: 'village',
+    x: 6, y: 3,
+    kind: 'blacksmith',
+  },
 }
 
 /** Generate a deterministic decorative Layout from a Map's tile palette.

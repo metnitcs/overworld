@@ -15,11 +15,28 @@ function gs(overrides: Partial<GameState> = {}): GameState {
     str: STAT_BASE, int: STAT_BASE, dex: STAT_BASE,
     agi: STAT_BASE, luk: STAT_BASE, vit: STAT_BASE,
     unspentPoints: 0,
-    inventory: {}, equipWeapon: null, equipArmor: null, plus: {},
+    inventory: [], equipWeapon: null, equipArmor: null,
     map: 'village', px: 0, py: 0, steps: 0,
-    transcended: false,
+    transcended: false, classChanged: false,
     ...overrides,
   }
+}
+
+/** Slice 47: helper to build a GameState whose equipWeapon/Armor FK points
+ *  at a synthesised InventoryItem row carrying the given itemKey + plus. */
+function gsWith(eq: { weapon?: { itemKey: string; plus?: number }; armor?: { itemKey: string; plus?: number } }, overrides: Partial<GameState> = {}): GameState {
+  const inv: GameState['inventory'] = []
+  let weaponId: string | null = null
+  let armorId: string | null = null
+  if (eq.weapon) {
+    weaponId = 'iv-w'
+    inv.push({ id: weaponId, itemKey: eq.weapon.itemKey, qty: 1, plus: eq.weapon.plus ?? 0 })
+  }
+  if (eq.armor) {
+    armorId = 'iv-a'
+    inv.push({ id: armorId, itemKey: eq.armor.itemKey, qty: 1, plus: eq.armor.plus ?? 0 })
+  }
+  return gs({ inventory: inv, equipWeapon: weaponId, equipArmor: armorId, ...overrides })
 }
 
 describe('deriveStats — primary-stat formulas', () => {
@@ -63,40 +80,26 @@ describe('deriveStats — primary-stat formulas', () => {
 
   it('weapon ATK + enhance (+3 per plus) folds into pAtk', () => {
     // base pAtk (STR 10) = 20 ; sword-1 atk 8 + plus 2 (+6) → 20 + 14 = 34
-    const g = deriveStats(gs({
-      lv: 1,
-      equipWeapon: 'sword-1',
-      plus: { 'sword-1_w': 2 },
-    }))
+    const g = deriveStats(gsWith({ weapon: { itemKey: 'sword-1', plus: 2 } }, { lv: 1 }))
     expect(g.atk).toBe(20 + 8 + 6)
   })
 
   it('weapon mATK folds into mAtk; enhance adds +3 per plus only when the weapon has matk', () => {
     // base mAtk (INT 10) = 20
     // staff-1 (matk 4) → 24
-    const eq = deriveCombatStats(gs({ lv: 1, equipWeapon: 'staff-1' }))
+    const eq = deriveCombatStats(gsWith({ weapon: { itemKey: 'staff-1' } }, { lv: 1 }))
     expect(eq.mAtk).toBe(20 + 4)
     // plus 2 → +6 → 30
-    const enh = deriveCombatStats(gs({
-      lv: 1, equipWeapon: 'staff-1',
-      plus: { 'staff-1_w': 2 },
-    }))
+    const enh = deriveCombatStats(gsWith({ weapon: { itemKey: 'staff-1', plus: 2 } }, { lv: 1 }))
     expect(enh.mAtk).toBe(20 + 4 + 6)
     // non-matk weapon plus → mAtk unchanged
-    const noMatk = deriveCombatStats(gs({
-      lv: 1, equipWeapon: 'sword-1',
-      plus: { 'sword-1_w': 5 },
-    }))
+    const noMatk = deriveCombatStats(gsWith({ weapon: { itemKey: 'sword-1', plus: 5 } }, { lv: 1 }))
     expect(noMatk.mAtk).toBe(20)
   })
 
   it('armor DEF + enhance (+2 per plus) folds into pDef', () => {
     // base pDef (VIT 10) = 5 ; armor-1 def 5 + plus 3 (+6) → 5 + 11 = 16
-    const g = deriveStats(gs({
-      lv: 1,
-      equipArmor: 'armor-1',
-      plus: { 'armor-1_a': 3 },
-    }))
+    const g = deriveStats(gsWith({ armor: { itemKey: 'armor-1', plus: 3 } }, { lv: 1 }))
     expect(g.def).toBe(5 + 5 + 6)
   })
 

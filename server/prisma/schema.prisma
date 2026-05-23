@@ -40,18 +40,18 @@ model User {
 /// Slice 30: audit trail for every admin mutation. Written by the
 /// `app.audit(...)` decorator. Read-only via /api/admin/logs.
 model AuditLog {
-  id           String   @id @default(cuid())
+  id          String   @id @default(cuid())
   /// User who performed the action. Null = system / unauthenticated.
-  actorUserId  String?
+  actorUserId String?
   /// e.g. 'item.update', 'character.delete', 'user.suspend', 'cache.reload'
-  action       String
+  action      String
   /// Target row type — 'item', 'monster', 'map', 'character', 'user', etc.
-  targetType   String
+  targetType  String
   /// Target row id when applicable.
-  targetId     String?
+  targetId    String?
   /// Free-form snapshot: what changed, request payload, etc.
-  payload      Json?
-  createdAt    DateTime @default(now())
+  payload     Json?
+  createdAt   DateTime @default(now())
 
   @@index([actorUserId])
   @@index([targetType, targetId])
@@ -59,63 +59,82 @@ model AuditLog {
 }
 
 model Character {
-  id          String          @id @default(cuid())
-  userId      String
-  user        User            @relation(fields: [userId], references: [id], onDelete: Cascade)
-  name        String
-  raceId      String
-  classId     String
-  lv          Int             @default(1)
-  exp         Int             @default(0)
-  hp          Int
-  maxHp       Int
-  mp          Int
-  maxMp       Int
+  id            String          @id @default(cuid())
+  userId        String
+  user          User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name          String
+  raceId        String
+  classId       String
+  lv            Int             @default(1)
+  exp           Int             @default(0)
+  hp            Int
+  maxHp         Int
+  mp            Int
+  maxMp         Int
   // Slice 23: derived combat stats — cached from primary stats by deriveStats.
   // Kept in DB so legacy reads + admin queries still see the final number.
-  atk         Int
-  def         Int
-  spd         Int
+  atk           Int
+  def           Int
+  spd           Int
   /// Slice 23: 6 primary stats. Players allocate via [+] on Status modal;
   /// every level grants STAT_POINTS_PER_LEVEL (5) extra unspent points.
-  str         Int             @default(10)
-  int         Int             @default(10)
-  dex         Int             @default(10)
-  agi         Int             @default(10)
-  luk         Int             @default(10)
-  vit         Int             @default(10)
-  unspentPoints Int           @default(0)
-  gold        Int             @default(100)
-  mapId       String          @default("village")
-  px          Int             @default(5)
-  py          Int             @default(5)
-  steps       Int             @default(0)
-  equipWeapon String?
-  equipArmor  String?
-  plus        Json // { "sword-1_w": 5, ... }
+  str           Int             @default(10)
+  int           Int             @default(10)
+  dex           Int             @default(10)
+  agi           Int             @default(10)
+  luk           Int             @default(10)
+  vit           Int             @default(10)
+  unspentPoints Int             @default(0)
+  gold          Int             @default(100)
+  mapId         String          @default("village")
+  px            Int             @default(5)
+  py            Int             @default(5)
+  steps         Int             @default(0)
+  /// Slice 47: per-instance gear. equipWeapon/Armor are now FKs to the
+  /// equipped InventoryItem row (not itemKey). Unique on each side so a
+  /// given InventoryItem can only be equipped by one Character at a time
+  /// (it should always be its owner — guarded at the application layer).
+  /// ON DELETE SET NULL so selling/dropping an equipped item clears the
+  /// slot automatically. Character.plus is gone — Plus now lives on the
+  /// InventoryItem row itself, per [[adr-002-per-instance-gear-inventory]].
+  equipWeaponId String?         @unique
+  equipWeapon   InventoryItem?  @relation("EquipWeapon", fields: [equipWeaponId], references: [id], onDelete: SetNull)
+  equipArmorId  String?         @unique
+  equipArmor    InventoryItem?  @relation("EquipArmor", fields: [equipArmorId], references: [id], onDelete: SetNull)
   /// Slice 17: true after the Lv 10 race-change quest has resolved. Gates
   /// the RaceChangeModal so it fires exactly once.
-  transcended Boolean         @default(false)
+  transcended   Boolean         @default(false)
   /// Slice 26: true after the Lv 5 class-change quest has resolved.
   /// New characters start as STARTER_CLASS ('adventurer') and pick a real
   /// advanced class via the ClassChoiceModal at threshold lv. Mirrors the
   /// `transcended` flag's once-per-character lifecycle.
-  classChanged Boolean        @default(false)
-  inventory   InventoryItem[]
-  battleLogs  BattleLog[]
-  updatedAt   DateTime        @updatedAt
+  classChanged  Boolean         @default(false)
+  inventory     InventoryItem[] @relation("CharacterInventory")
+  battleLogs    BattleLog[]
+  updatedAt     DateTime        @updatedAt
 
   @@index([userId])
 }
 
+/// Slice 47: per-instance for weapon/armor (one row = one physical item,
+/// qty always 1, carries its own `plus`); stack-by-itemKey for mat/consume
+/// (one row per (characterId, itemKey) with qty). Stack policy is enforced
+/// by the `addItem` server helper, not by a DB constraint, because we need
+/// both shapes in the same table. See ADR 0003.
 model InventoryItem {
-  id          String    @id @default(cuid())
-  characterId String
-  character   Character @relation(fields: [characterId], references: [id], onDelete: Cascade)
-  itemKey     String // e.g. 'potion-s', 'sword-1'
-  qty         Int
+  id                 String     @id @default(cuid())
+  characterId        String
+  character          Character  @relation("CharacterInventory", fields: [characterId], references: [id], onDelete: Cascade)
+  itemKey            String // e.g. 'potion-s', 'sword-1'
+  qty                Int        @default(1)
+  /// Plus level (0..10) for weapon/armor instances. Always 0 for mat/consume.
+  plus               Int        @default(0)
+  /// Backrefs for the Character.equipWeapon/equipArmor FKs (Prisma needs them
+  /// to materialise the relation). Should be null on the vast majority of rows.
+  equippedAsWeaponOn Character? @relation("EquipWeapon")
+  equippedAsArmorOn  Character? @relation("EquipArmor")
 
-  @@unique([characterId, itemKey])
+  @@index([characterId, itemKey])
 }
 
 model BattleLog {
@@ -137,7 +156,7 @@ model BattleLog {
 /// Slice 28: races and char-classes moved to DB so admin can edit them
 /// via UI. Seed copies the shared/data.ts defaults on first migration.
 model Race {
-  id        String  @id              // 'human', 'mara', 'god', etc.
+  id        String  @id // 'human', 'mara', 'god', etc.
   name      String
   emoji     String
   desc      String
@@ -151,16 +170,16 @@ model Race {
 }
 
 model CharClass {
-  id            String  @id          // 'adventurer', 'warrior', etc.
-  name          String
-  emoji         String
-  desc          String
+  id             String  @id // 'adventurer', 'warrior', etc.
+  name           String
+  emoji          String
+  desc           String
   /// StatModifier: growth recommendation weights (NOT auto-applied).
-  growth        Json
+  growth         Json
   /// Skill: { name, mp, mult, type } — transitional, moves to Skill table later.
-  skill         Json
-  starter       Boolean @default(false)
-  available     Boolean @default(true)
+  skill          Json
+  starter        Boolean @default(false)
+  available      Boolean @default(true)
   /// Slice 27: gates which advanced classes appear in the Lv-120 quest
   /// for a player with this raceId. Null for the starter class.
   requiredRaceId String?
@@ -247,6 +266,8 @@ model Map {
 enum NpcKind {
   shop
   healer
+  /// Slice 48: gates the Enhance ceremony. See CONTEXT.md "Blacksmith".
+  blacksmith
   quest
 }
 

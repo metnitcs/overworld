@@ -117,10 +117,10 @@ export interface WarpDef {
 
 /** Semantic role attached to a Tile beyond visual rendering. See CONTEXT.md
  *  "Tile Kind". Warps are deliberately NOT a kind — they live in their own
- *  table (slice 12). */
-export type TileKind = 'spawn' | 'boss-spawn' | 'shop' | 'healer' | 'quest'
+ *  table (slice 12). Slice 48: `blacksmith` opens the Enhance ceremony. */
+export type TileKind = 'spawn' | 'boss-spawn' | 'shop' | 'healer' | 'blacksmith' | 'quest'
 
-export type NpcKind = 'shop' | 'healer' | 'quest'
+export type NpcKind = 'shop' | 'healer' | 'blacksmith' | 'quest'
 
 /** A single item a shop NPC sells, at a fixed gold price. */
 export interface ShopEntry {
@@ -229,6 +229,17 @@ export interface DerivedStats {
   spd: number
 }
 
+/** Slice 47: per-instance inventory row. Shape mirrors the Prisma
+ *  `InventoryItem` model. `plus` is always 0 for mat/consume; `qty` is
+ *  always 1 for weapon/armor. The stack policy is enforced by the
+ *  `addItem` server helper, not by a DB constraint. */
+export interface InventoryItem {
+  id: string
+  itemKey: string
+  qty: number
+  plus: number
+}
+
 export interface GameState {
   name: string
   raceId: string
@@ -255,11 +266,15 @@ export interface GameState {
    *  via the Status modal. */
   unspentPoints: number
   gold: number
-  inventory: Record<string, number>
+  /** Slice 47: list of InventoryItem rows. Weapon/armor are per-instance
+   *  (one row = one physical item, qty=1, own plus). Mat/consume stack
+   *  (one row per (characterId, itemKey) with qty). See ADR 0003. */
+  inventory: InventoryItem[]
+  /** Slice 47: FK to the equipped InventoryItem.id (was an itemKey string).
+   *  null = nothing equipped. The equipped row stays in `inventory[]`; the
+   *  UI filters it out of the bag view. */
   equipWeapon: string | null
   equipArmor: string | null
-  /** key = `${itemKey}_w` (weapon) or `${itemKey}_a` (armor) */
-  plus: Record<string, number>
   map: string
   px: number
   py: number
@@ -315,7 +330,8 @@ export type ModalType =
   | 'none'
   | 'inventory'
   | 'craft'
-  | 'enhance'
+  | 'blacksmith'         // Slice 48: replaces the old 'enhance' modal —
+                         // opened only by stepping on a Blacksmith NPC tile
   | 'class-change'
   | 'shop'
   | 'help'

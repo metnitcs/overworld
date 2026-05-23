@@ -1,0 +1,34 @@
+# Per-instance identity for weapon/armor inventory items
+
+Enhance (+plus) creates per-item state, but until now `InventoryItem` stacked by `(characterId, itemKey)` and Plus was stored as `Character.plus` keyed by `itemKey + slot`. That model could not represent "two ดาบเหล็ก, one +5 and one +0" — duplicates inherited each other's Plus, an admin override was the only escape hatch, and the cached `atk/def` silently desynced from Plus. We split inventory by ItemType: weapon/armor get per-instance identity (one row = one physical item, `qty` always 1, carries its own `plus` column); mat/consume remain stackable by `(characterId, itemKey)` with `qty`. `Character.equipWeapon` and `equipArmor` become FKs to `InventoryItem.id`, and `Character.plus` is dropped. Enhance is moved behind a new Blacksmith NPC ceremony that refuses equipped items and charges plus-stones + a gold fee.
+
+The motivating frame is the 2000s-Thai MMORPG mental model (Ragnarok / Mu / 12Sky / Yulgang) already cited in Slice 46's revert to Transfer: each refined weapon IS its own thing, distinguishable from another copy and tradable with its Plus attached. Once gear has per-instance identity, "transfer on equip" stops needing to move rows across tables — the Equipment Slot is just an FK and the Inventory list filters out any id appearing in a slot. The same identity unblocks future player trade, fixes the admin Set-Plus footgun, and forces server-side `deriveStats` to re-run on any Plus change (which is what the existing admin PUT silently skipped).
+
+## Considered Options
+
+- **All-per-instance (Option A1).** Even mat/consume become one row per unit. Rejected — a 99-potion stack becoming 99 rows bloats query, payload, and UI for zero gameplay benefit. Potions have no per-instance state worth recording.
+- **Type-level Plus on Character (the prior model).** Rejected — this ADR supersedes it. Two copies of the same itemKey ghost-share Plus, equip/unequip leaks state across instances, and trade/shop-sell is impossible without losing or duplicating Plus.
+- **Stackable flag on `ItemDef` (Option A3).** Rejected — admitting `type='weapon'` with `stackable=true` reintroduces the original bug under a new name; the type already encodes the intended policy.
+- **Split tables: `StackInventoryItem` + `GearInventoryItem` (Option E2's cousin).** Rejected — gives DB-level uniqueness for the stackable subset but forces every "show inventory" query to UNION two tables and complicates the equip FK story. The single-table approach is one Prisma migration off the current schema and the stackable invariant is enforced cheaply at the `addItem` boundary.
+- **Physical row movement on equip (Slice 46's Transfer).** Kept conceptually but reinterpreted: the row no longer moves. The Equipment Slot is an FK to the InventoryItem; "Transfer" becomes a UI rule that hides equipped rows from the bag. This preserves the player-facing semantic Slice 46 was protecting while keeping the per-instance id stable across equip/unequip.
+- **Keep Enhance in the HUD (no Blacksmith NPC).** Rejected — the per-instance unlock made "ตี+ from anywhere" possible but the design intent is the 2000s ceremony: walk to the smith, pay for service. Gating it behind an NPC is also the natural seam for the gold fee and for refusing equipped items.
+
+## Consequences
+
+- `InventoryItem` schema: drop the `(characterId, itemKey)` unique constraint, add `id` PK (cuid), add `plus Int @default(0)`. The "weapon/armor are 1-per-row, mat/consume stack" rule lives in the `addItem` server helper, not in DB constraints.
+- `Character.equipWeapon` and `Character.equipArmor` change from `String?` (an itemKey) to `String?` FK to `InventoryItem.id` with `ON DELETE SET NULL`. The cached scalar columns `atk / def / spd` on `Character` MUST be recomputed via `deriveStats` whenever Plus or equipment changes — admin endpoints currently violate this; the new admin Set-Plus endpoint fixes it at source.
+- `Character.plus` JSON column is dropped. Any reader that referenced `character.plus[itemKey + slot]` must read the per-row `inventoryItem.plus` of the equipped row instead.
+- `POST /equip` and `POST /enhance` intent bodies change from `{itemKey, slot}` to `{inventoryItemId}`; slot is derived from the item's `ItemDef.type`. `POST /enhance` additionally requires the Blacksmith NPC id and rejects ids matching `character.equipWeapon` / `equipArmor`. `POST /consume`, `POST /shop/buy`, `POST /craft`, and the battle/resolve drop path keep their bodies but internally INSERT a new `InventoryItem` row whenever the result is a weapon/armor.
+- A new `NpcKind = 'blacksmith'` joins `shop / healer / quest`. Seed data places at least one Blacksmith in the starting village. The Enhance button is removed from the HUD modal list; the `BlacksmithModal` opens only on NPC interaction.
+- The admin character editor's `Plus level JSON` textarea is removed. Plus is mutated through a per-row admin endpoint `POST /api/admin/inventory/:itemId/set-plus` that audits the change and re-runs `deriveStats`. This is the root-cause fix for the bug where admin-set Plus did not change the player's ATK / DEF.
+- **Supersedes** the line in [ADR 0002](./0002-db-authoritative-content-seeded-from-data-ts.md) Consequences that states "`Character.equipWeapon`, `Character.equipArmor` ... remain plain strings" — those two become FKs. `Character.mapId` and `InventoryItem.itemKey` (stack rows) remain plain strings, as ADR 0002 still applies to them.
+- DB migration is destructive. Phase 2 MVP has no production data, so the migration nukes and reseeds rather than backfilling. A backfill script (`qty > 1` rows expanded into N rows, `Character.plus` distributed across matching inventory rows) is the post-launch pattern if this ever ships before further schema work.
+- Inventory UI renders weapon/armor as separate slots with a `+N` badge (only when `N > 0`); mat/consume keep the `×N` qty badge. Items group by itemKey then sort by Plus descending. Item names in tooltips, equip slot displays, and future trade/chat formats use the prefixed form `+N ItemName`.
+
+## Implementation slices
+
+Tracked in [PLAN.md](../../PLAN.md). Three vertical slices that each ship a playable game:
+
+- **Slice 47 — Per-instance gear core.** Schema migration, all intent endpoints accept `inventoryItemId`, store + InventoryModal render per-instance with `+N` badge, EnhanceModal continues to work from the HUD on equipped items (operating by id now). No Blacksmith NPC yet.
+- **Slice 48 — Blacksmith NPC + ceremony.** New NpcKind, NPC seeded in starting village, BlacksmithModal opened from NPC interaction, gold fee added, HUD enhance button removed, server rejects enhance on equipped items.
+- **Slice 49 — Admin Set-Plus endpoint + re-derive fix.** `POST /api/admin/inventory/:itemId/set-plus` with audit + re-derive, admin form rebuilt to drive it per row, Plus JSON textarea retired.

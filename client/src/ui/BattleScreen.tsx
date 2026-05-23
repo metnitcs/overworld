@@ -128,15 +128,15 @@ export function BattleScreen() {
 
   function useItem() {
     if (!canControl) return
-    const keys = Object.keys(game.inventory).filter((k) => items[k]?.type === 'consume' && game.inventory[k] > 0)
-    if (keys.length === 0) {
+    // Slice 47: scan the per-instance list for the first consume row with qty > 0.
+    const row = game.inventory.find((r) => items[r.itemKey]?.type === 'consume' && r.qty > 0)
+    if (!row) {
       pushBattleLog('ไม่มีไอเทมใช้ได้!')
       return
     }
-    const key = keys[0]
-    const it = items[key]
+    const it = items[row.itemKey]
     if (!it) return
-    useConsume(key)
+    useConsume(row.itemKey)
     if (it.heal) addFloat('player', `+${it.heal}`, '#2dc653')
     if (it.healMp) addFloat('player', `+${it.healMp} MP`, '#4f8ed6')
     pushBattleLog(`🧪 ใช้ ${it.name}`)
