@@ -73,6 +73,13 @@ export interface AdminItemRow {
   matk: number | null
   heal: number | null
   healMp: number | null
+  // Slice 51: per-item primary stat bonuses (flat, not Plus-scaled).
+  bonusStr: number | null
+  bonusInt: number | null
+  bonusDex: number | null
+  bonusAgi: number | null
+  bonusLuk: number | null
+  bonusVit: number | null
   desc: string
 }
 
@@ -86,6 +93,12 @@ export interface AdminItemBody {
   matk?: number | null
   heal?: number | null
   healMp?: number | null
+  bonusStr?: number | null
+  bonusInt?: number | null
+  bonusDex?: number | null
+  bonusAgi?: number | null
+  bonusLuk?: number | null
+  bonusVit?: number | null
   desc: string
 }
 
@@ -521,6 +534,27 @@ export const api = {
       `/api/admin/inventory/${inventoryItemId}/set-plus`,
       { method: 'POST', token, body: { plus } },
     ),
+
+  /** Slice 50 — admin Add Item. Stackable types (mat/consume) increment
+   *  qty on the existing row; weapon/armor INSERT one fresh row per unit
+   *  with the optional initial Plus. Returns the freshly-listed inventory
+   *  so the form can render the result without a separate GET. Audited as
+   *  `inventory.add`. */
+  adminAddItem: (
+    token: string,
+    body: { characterId: string; itemKey: string; qty: number; plus?: number },
+  ) =>
+    request<{ inventory: Array<{ id: string; itemKey: string; qty: number; plus: number }> }>(
+      '/api/admin/inventory',
+      { method: 'POST', token, body },
+    ),
+
+  /** Slice 50 — admin Delete Item. Deletes one InventoryItem row. If the
+   *  row was equipped, the schema's ON DELETE SET NULL clears the FK and
+   *  the server re-derives the owner's cached atk/def afterward. Audited
+   *  as `inventory.delete`. */
+  adminDeleteInventoryItem: (token: string, inventoryItemId: string) =>
+    request<{ ok: true }>(`/api/admin/inventory/${inventoryItemId}`, { method: 'DELETE', token }),
 
   // Slice 30 — Users + Audit logs
   adminListUsers: (token: string) =>

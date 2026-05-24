@@ -5,6 +5,7 @@ import fs from 'node:fs'
 import crypto from 'node:crypto'
 import { pipeline } from 'node:stream/promises'
 import { deriveStats, type GameState, type InventoryItem } from '@asura/shared'
+import { addItem } from '../lib/inventory.js'
 
 // ─── Schemas ──────────────────────────────────────────────────────────────
 
@@ -22,6 +23,14 @@ const itemBody = z.object({
   matk: z.number().int().nullable().optional(),
   heal: z.number().int().nullable().optional(),
   healMp: z.number().int().nullable().optional(),
+  // Slice 51: per-item primary stat bonuses (flat, not scaled by Plus).
+  // Mat/consume types never read these even if set — guarded UI-side.
+  bonusStr: z.number().int().nullable().optional(),
+  bonusInt: z.number().int().nullable().optional(),
+  bonusDex: z.number().int().nullable().optional(),
+  bonusAgi: z.number().int().nullable().optional(),
+  bonusLuk: z.number().int().nullable().optional(),
+  bonusVit: z.number().int().nullable().optional(),
   desc: z.string(),
 })
 
@@ -152,6 +161,20 @@ const userStatusBody = z.object({
 // JSON blob" path that silently skipped re-derive (the original bug).
 const inventorySetPlusBody = z.object({
   plus: z.number().int().min(0).max(10),
+})
+
+// ─── Slice 50: admin Add Item + Delete Item ───────────────────────────
+// Per-row admin grants. Add uses the same addItem helper as the player
+// intent endpoints (Slice 47) so stack policy stays uniform: stackable
+// types (mat/consume) upsert qty; weapon/armor INSERT one fresh row per
+// unit. Optional `plus` (gear only) sets the initial Plus level.
+// Delete clears the FK if the item was equipped (handled at DB level by
+// ON DELETE SET NULL) and re-derives the owner's cached atk/def.
+const inventoryAddBody = z.object({
+  characterId: z.string().min(1),
+  itemKey: z.string().min(1),
+  qty: z.number().int().min(1).max(99).default(1),
+  plus: z.number().int().min(0).max(10).optional(),
 })
 
 const characterPatch = z.object({
@@ -783,6 +806,107 @@ export function registerAdminRoutes(app: FastifyInstance): void {
     return reply.send({
       inventoryItem: { id: updated.id, itemKey: updated.itemKey, qty: updated.qty, plus: updated.plus },
     })
+  })
+
+  // ─── Slice 50: POST /api/admin/inventory — admin Add Item ─────────────
+  // Grants `qty` units of an item to the target character via the shared
+  // addItem helper (mat/consume stack; weapon/armor INSERT one row per
+  // unit). Optional `plus` sets the initial Plus on each new gear row.
+  // Audited as `inventory.add`. Returns the freshly-listed character.
+  app.post('/api/admin/inventory', guard, async (req, reply) => {
+    const parsed = inventoryAddBody.safeParse(req.body)
+    if (!parsed.success) {
+      return reply.code(400).send({ error: 'invalid input', issues: parsed.error.issues })
+    }
+    const { characterId, itemKey, qty, plus } = parsed.data
+
+    const owner = await app.prisma.character.findUnique({ where: { id: characterId } })
+    if (!owner) return reply.code(404).send({ error: 'character not found' })
+    const bundle = await app.contentCache.get()
+    const def = bundle.items[itemKey]
+    if (!def) return reply.code(404).send({ error: 'item def not found' })
+    // Plus is meaningful only for weapon/armor — reject if the admin sets
+    // it on a stackable type so a future read doesn't have to wonder.
+    if (plus !== undefined && def.type !== 'weapon' && def.type !== 'armor') {
+      return reply.code(400).send({ error: 'plus only applies to weapon/armor' })
+    }
+
+    await app.prisma.$transaction(async (tx) => {
+      await addItem(tx, characterId, itemKey, qty, bundle.items, { plus })
+    })
+    const after = await app.prisma.character.findUniqueOrThrow({
+      where: { id: characterId }, include: { inventory: true },
+    })
+    await app.audit({
+      actorUserId: req.userId, action: 'inventory.add',
+      targetType: 'character', targetId: characterId,
+      payload: { itemKey, qty, plus: plus ?? null, itemType: def.type },
+    })
+    return reply.send({
+      inventory: after.inventory.map((it) => ({
+        id: it.id, itemKey: it.itemKey, qty: it.qty, plus: it.plus,
+      })),
+    })
+  })
+
+  // ─── Slice 50: DELETE /api/admin/inventory/:itemId — admin remove ────
+  // Deletes one InventoryItem row. If the row is equipped, the schema's
+  // ON DELETE SET NULL clears the FK; we re-derive the owner's cached
+  // atk/def afterward so the player's stat panel updates immediately.
+  // Audited as `inventory.delete`.
+  app.delete('/api/admin/inventory/:itemId', guard, async (req, reply) => {
+    const { itemId } = req.params as { itemId: string }
+    const row = await app.prisma.inventoryItem.findUnique({ where: { id: itemId } })
+    if (!row) return reply.code(404).send({ error: 'inventory item not found' })
+
+    const owner = await app.prisma.character.findUniqueOrThrow({
+      where: { id: row.characterId }, include: { inventory: true },
+    })
+    const wasEquipped = row.id === owner.equipWeaponId || row.id === owner.equipArmorId
+
+    await app.prisma.$transaction(async (tx) => {
+      await tx.inventoryItem.delete({ where: { id: row.id } })
+      if (wasEquipped) {
+        // Re-derive against the post-delete inventory. The FK is SET NULL
+        // by the schema cascade, so deriveStats sees no equipped row and
+        // drops the bonus correctly.
+        const fresh = await tx.character.findUniqueOrThrow({
+          where: { id: owner.id }, include: { inventory: true },
+        })
+        const bundle = await app.contentCache.get()
+        const draft: GameState & { id: string } = {
+          id: fresh.id, name: fresh.name, raceId: fresh.raceId, classId: fresh.classId,
+          lv: fresh.lv, exp: fresh.exp,
+          hp: fresh.hp, maxHp: fresh.maxHp, mp: fresh.mp, maxMp: fresh.maxMp,
+          atk: fresh.atk, def: fresh.def, spd: fresh.spd,
+          str: fresh.str, int: fresh.int, dex: fresh.dex,
+          agi: fresh.agi, luk: fresh.luk, vit: fresh.vit,
+          unspentPoints: fresh.unspentPoints,
+          gold: fresh.gold,
+          inventory: fresh.inventory.map((it): InventoryItem => ({
+            id: it.id, itemKey: it.itemKey, qty: it.qty, plus: it.plus,
+          })),
+          equipWeapon: fresh.equipWeaponId, equipArmor: fresh.equipArmorId,
+          map: fresh.mapId, px: fresh.px, py: fresh.py, steps: fresh.steps,
+          transcended: fresh.transcended, classChanged: fresh.classChanged,
+        }
+        const next = deriveStats(draft, { items: bundle.items })
+        await tx.character.update({
+          where: { id: owner.id },
+          data: {
+            maxHp: next.maxHp, maxMp: next.maxMp,
+            hp: next.hp, mp: next.mp,
+            atk: next.atk, def: next.def, spd: next.spd,
+          },
+        })
+      }
+    })
+    await app.audit({
+      actorUserId: req.userId, action: 'inventory.delete',
+      targetType: 'inventoryItem', targetId: row.id,
+      payload: { characterId: owner.id, itemKey: row.itemKey, qty: row.qty, plus: row.plus, wasEquipped },
+    })
+    return reply.send({ ok: true })
   })
 
   // ── Users (Slice 30) ──

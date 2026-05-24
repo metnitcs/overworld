@@ -684,7 +684,8 @@ describe('Slice 49 — POST /api/admin/inventory/:itemId/set-plus', () => {
     expect(body.inventoryItem.plus).toBe(5)
 
     const after = await prisma.character.findUniqueOrThrow({ where: { id: cid } })
-    expect(after.atk).toBe(atkBefore + 5 * 3)
+    // Slice 51: step scaling — +5 = +10 atk (5 × 2 at low tier), NOT +15.
+    expect(after.atk).toBe(atkBefore + 10)
 
     // Audit row exists with the action name + old/new plus.
     const audit = await prisma.auditLog.findFirst({
@@ -761,6 +762,220 @@ describe('Slice 49 — POST /api/admin/inventory/:itemId/set-plus', () => {
       method: 'POST', url: `/api/admin/inventory/${sword.id}/set-plus`,
       headers: { authorization: `Bearer ${userToken}` },
       payload: { plus: 3 },
+    })
+    expect(res.statusCode).toBe(403)
+  })
+})
+
+describe('Slice 50 — POST /api/admin/inventory (admin Add Item)', () => {
+  it('adds a stackable item (potion-s) — bumps qty on the existing row', async () => {
+    const adminToken = await registerAndGetToken('test_admin')
+    const userToken = await registerAndGetToken('test_charowner_addstack')
+    const created = await app.inject({
+      method: 'POST', url: '/api/character',
+      headers: { authorization: `Bearer ${userToken}` },
+      payload: { name: 'AS' },
+    })
+    const cid = (created.json() as { character: { id: string } }).character.id
+    // Character spawns with 3 potion-s.
+    const res = await app.inject({
+      method: 'POST', url: '/api/admin/inventory',
+      headers: { authorization: `Bearer ${adminToken}` },
+      payload: { characterId: cid, itemKey: 'potion-s', qty: 5 },
+    })
+    expect(res.statusCode).toBe(200)
+    const body = res.json() as { inventory: Array<{ itemKey: string; qty: number; plus: number }> }
+    const potion = body.inventory.find((it) => it.itemKey === 'potion-s')
+    expect(potion?.qty).toBe(8) // 3 starter + 5 added
+    expect(body.inventory.filter((it) => it.itemKey === 'potion-s').length).toBe(1) // one row
+  })
+
+  it('adds gear (sword-1) at qty 3 with initial plus 2 — inserts 3 rows', async () => {
+    const adminToken = await registerAndGetToken('test_admin')
+    const userToken = await registerAndGetToken('test_charowner_addgear')
+    const created = await app.inject({
+      method: 'POST', url: '/api/character',
+      headers: { authorization: `Bearer ${userToken}` },
+      payload: { name: 'AG' },
+    })
+    const cid = (created.json() as { character: { id: string } }).character.id
+    const res = await app.inject({
+      method: 'POST', url: '/api/admin/inventory',
+      headers: { authorization: `Bearer ${adminToken}` },
+      payload: { characterId: cid, itemKey: 'sword-1', qty: 3, plus: 2 },
+    })
+    expect(res.statusCode).toBe(200)
+    const body = res.json() as { inventory: Array<{ itemKey: string; qty: number; plus: number }> }
+    const swords = body.inventory.filter((it) => it.itemKey === 'sword-1')
+    expect(swords.length).toBe(3)
+    expect(swords.every((it) => it.qty === 1 && it.plus === 2)).toBe(true)
+  })
+
+  it('rejects setting plus on a stackable type (400)', async () => {
+    const adminToken = await registerAndGetToken('test_admin')
+    const userToken = await registerAndGetToken('test_charowner_addbad')
+    const created = await app.inject({
+      method: 'POST', url: '/api/character',
+      headers: { authorization: `Bearer ${userToken}` },
+      payload: { name: 'BD' },
+    })
+    const cid = (created.json() as { character: { id: string } }).character.id
+    const res = await app.inject({
+      method: 'POST', url: '/api/admin/inventory',
+      headers: { authorization: `Bearer ${adminToken}` },
+      payload: { characterId: cid, itemKey: 'potion-s', qty: 1, plus: 3 },
+    })
+    expect(res.statusCode).toBe(400)
+  })
+
+  it('returns 404 for unknown character', async () => {
+    const adminToken = await registerAndGetToken('test_admin')
+    const res = await app.inject({
+      method: 'POST', url: '/api/admin/inventory',
+      headers: { authorization: `Bearer ${adminToken}` },
+      payload: { characterId: 'no-such-char', itemKey: 'potion-s', qty: 1 },
+    })
+    expect(res.statusCode).toBe(404)
+  })
+
+  it('returns 404 for unknown itemKey', async () => {
+    const adminToken = await registerAndGetToken('test_admin')
+    const userToken = await registerAndGetToken('test_charowner_addunk')
+    const created = await app.inject({
+      method: 'POST', url: '/api/character',
+      headers: { authorization: `Bearer ${userToken}` },
+      payload: { name: 'UI' },
+    })
+    const cid = (created.json() as { character: { id: string } }).character.id
+    const res = await app.inject({
+      method: 'POST', url: '/api/admin/inventory',
+      headers: { authorization: `Bearer ${adminToken}` },
+      payload: { characterId: cid, itemKey: 'no-such-item', qty: 1 },
+    })
+    expect(res.statusCode).toBe(404)
+  })
+
+  it('non-admin user is rejected with 403', async () => {
+    const userToken = await registerAndGetToken('test_not_admin_add')
+    const created = await app.inject({
+      method: 'POST', url: '/api/character',
+      headers: { authorization: `Bearer ${userToken}` },
+      payload: { name: 'NA' },
+    })
+    const cid = (created.json() as { character: { id: string } }).character.id
+    const res = await app.inject({
+      method: 'POST', url: '/api/admin/inventory',
+      headers: { authorization: `Bearer ${userToken}` },
+      payload: { characterId: cid, itemKey: 'potion-s', qty: 1 },
+    })
+    expect(res.statusCode).toBe(403)
+  })
+
+  it('audits the action with itemKey + qty + itemType', async () => {
+    const adminToken = await registerAndGetToken('test_admin')
+    const userToken = await registerAndGetToken('test_charowner_addaudit')
+    const created = await app.inject({
+      method: 'POST', url: '/api/character',
+      headers: { authorization: `Bearer ${userToken}` },
+      payload: { name: 'AU' },
+    })
+    const cid = (created.json() as { character: { id: string } }).character.id
+    await app.inject({
+      method: 'POST', url: '/api/admin/inventory',
+      headers: { authorization: `Bearer ${adminToken}` },
+      payload: { characterId: cid, itemKey: 'sword-1', qty: 2, plus: 4 },
+    })
+    const audit = await prisma.auditLog.findFirst({
+      where: { action: 'inventory.add', targetId: cid },
+      orderBy: { createdAt: 'desc' },
+    })
+    expect(audit).toBeDefined()
+    expect((audit?.payload as { itemKey: string }).itemKey).toBe('sword-1')
+    expect((audit?.payload as { qty: number }).qty).toBe(2)
+    expect((audit?.payload as { plus: number | null }).plus).toBe(4)
+    expect((audit?.payload as { itemType: string }).itemType).toBe('weapon')
+  })
+})
+
+describe('Slice 50 — DELETE /api/admin/inventory/:itemId (admin Remove Item)', () => {
+  it('deletes a non-equipped row; owner inventory shrinks', async () => {
+    const adminToken = await registerAndGetToken('test_admin')
+    const userToken = await registerAndGetToken('test_charowner_delplain')
+    const created = await app.inject({
+      method: 'POST', url: '/api/character',
+      headers: { authorization: `Bearer ${userToken}` },
+      payload: { name: 'DP' },
+    })
+    const cid = (created.json() as { character: { id: string } }).character.id
+    const sword = await prisma.inventoryItem.create({
+      data: { characterId: cid, itemKey: 'sword-1', qty: 1, plus: 0 },
+    })
+    const res = await app.inject({
+      method: 'DELETE', url: `/api/admin/inventory/${sword.id}`,
+      headers: { authorization: `Bearer ${adminToken}` },
+    })
+    expect(res.statusCode).toBe(200)
+    const after = await prisma.inventoryItem.findUnique({ where: { id: sword.id } })
+    expect(after).toBeNull()
+  })
+
+  it('deleting an equipped row clears the FK and re-derives owner atk', async () => {
+    const adminToken = await registerAndGetToken('test_admin')
+    const userToken = await registerAndGetToken('test_charowner_delequipped')
+    const created = await app.inject({
+      method: 'POST', url: '/api/character',
+      headers: { authorization: `Bearer ${userToken}` },
+      payload: { name: 'DE' },
+    })
+    const cid = (created.json() as { character: { id: string } }).character.id
+    const sword = await prisma.inventoryItem.create({
+      data: { characterId: cid, itemKey: 'sword-1', qty: 1, plus: 5 },
+    })
+    // Equip + capture buffed atk.
+    await app.inject({
+      method: 'POST', url: `/api/character/${cid}/equip`,
+      headers: { authorization: `Bearer ${userToken}` },
+      payload: { inventoryItemId: sword.id },
+    })
+    const equipped = await prisma.character.findUniqueOrThrow({ where: { id: cid } })
+    expect(equipped.equipWeaponId).toBe(sword.id)
+    const atkWhileEquipped = equipped.atk
+
+    // Admin deletes the equipped row → FK SET NULL + re-derive drops the bonus.
+    const res = await app.inject({
+      method: 'DELETE', url: `/api/admin/inventory/${sword.id}`,
+      headers: { authorization: `Bearer ${adminToken}` },
+    })
+    expect(res.statusCode).toBe(200)
+    const after = await prisma.character.findUniqueOrThrow({ where: { id: cid } })
+    expect(after.equipWeaponId).toBeNull()
+    // Slice 51: sword-1 atk 8 + step plus 5 bonus = 10 → atk drops by 18.
+    expect(after.atk).toBe(atkWhileEquipped - 18)
+  })
+
+  it('returns 404 for unknown row', async () => {
+    const adminToken = await registerAndGetToken('test_admin')
+    const res = await app.inject({
+      method: 'DELETE', url: '/api/admin/inventory/no-such-id',
+      headers: { authorization: `Bearer ${adminToken}` },
+    })
+    expect(res.statusCode).toBe(404)
+  })
+
+  it('non-admin user is rejected with 403', async () => {
+    const userToken = await registerAndGetToken('test_not_admin_del')
+    const created = await app.inject({
+      method: 'POST', url: '/api/character',
+      headers: { authorization: `Bearer ${userToken}` },
+      payload: { name: 'NA' },
+    })
+    const cid = (created.json() as { character: { id: string } }).character.id
+    const sword = await prisma.inventoryItem.create({
+      data: { characterId: cid, itemKey: 'sword-1', qty: 1 },
+    })
+    const res = await app.inject({
+      method: 'DELETE', url: `/api/admin/inventory/${sword.id}`,
+      headers: { authorization: `Bearer ${userToken}` },
     })
     expect(res.statusCode).toBe(403)
   })

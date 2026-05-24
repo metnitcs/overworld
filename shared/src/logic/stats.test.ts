@@ -78,29 +78,65 @@ describe('deriveStats — primary-stat formulas', () => {
     expect(g.spd).toBe(5)
   })
 
-  it('weapon ATK + enhance (+3 per plus) folds into pAtk', () => {
-    // base pAtk (STR 10) = 20 ; sword-1 atk 8 + plus 2 (+6) → 20 + 14 = 34
+  it('Slice 51: weapon ATK + step plus bonus folds into pAtk', () => {
+    // base pAtk (STR 10) = 20 ; sword-1 atk 8 ; plus 2 → step bonus 4
+    // (low tier: +1, +2 → +2 each, cumulative 2,4) → 20 + 8 + 4 = 32
     const g = deriveStats(gsWith({ weapon: { itemKey: 'sword-1', plus: 2 } }, { lv: 1 }))
-    expect(g.atk).toBe(20 + 8 + 6)
+    expect(g.atk).toBe(20 + 8 + 4)
   })
 
-  it('weapon mATK folds into mAtk; enhance adds +3 per plus only when the weapon has matk', () => {
+  it('Slice 51: weapon mATK uses the same step bonus, but only when the weapon has matk', () => {
     // base mAtk (INT 10) = 20
     // staff-1 (matk 4) → 24
     const eq = deriveCombatStats(gsWith({ weapon: { itemKey: 'staff-1' } }, { lv: 1 }))
     expect(eq.mAtk).toBe(20 + 4)
-    // plus 2 → +6 → 30
+    // plus 2 → step bonus 4 → 28
     const enh = deriveCombatStats(gsWith({ weapon: { itemKey: 'staff-1', plus: 2 } }, { lv: 1 }))
-    expect(enh.mAtk).toBe(20 + 4 + 6)
-    // non-matk weapon plus → mAtk unchanged
+    expect(enh.mAtk).toBe(20 + 4 + 4)
+    // non-matk weapon plus → mAtk unchanged (sword has no matk; step
+    // bonus is suppressed in the mAtk fold).
     const noMatk = deriveCombatStats(gsWith({ weapon: { itemKey: 'sword-1', plus: 5 } }, { lv: 1 }))
     expect(noMatk.mAtk).toBe(20)
   })
 
-  it('armor DEF + enhance (+2 per plus) folds into pDef', () => {
-    // base pDef (VIT 10) = 5 ; armor-1 def 5 + plus 3 (+6) → 5 + 11 = 16
+  it('Slice 51: armor DEF + step plus bonus folds into pDef', () => {
+    // base pDef (VIT 10) = 5 ; armor-1 def 5 ; plus 3 → step bonus 3
+    // (low tier: +1,+2,+3 → +1 each, cumulative 1,2,3) → 5 + 5 + 3 = 13
     const g = deriveStats(gsWith({ armor: { itemKey: 'armor-1', plus: 3 } }, { lv: 1 }))
-    expect(g.def).toBe(5 + 5 + 6)
+    expect(g.def).toBe(5 + 5 + 3)
+  })
+
+  it('Slice 51: enhancePlusAtkBonus curve hits 10 at +5 and 35 at +10', async () => {
+    const { enhancePlusAtkBonus } = await import('./stats')
+    expect(enhancePlusAtkBonus(0)).toBe(0)
+    expect(enhancePlusAtkBonus(1)).toBe(2)
+    expect(enhancePlusAtkBonus(5)).toBe(10) // 5 * 2
+    expect(enhancePlusAtkBonus(6)).toBe(15) // 5*2 + 1*5
+    expect(enhancePlusAtkBonus(10)).toBe(35) // 5*2 + 5*5
+  })
+
+  it('Slice 51: enhancePlusDefBonus curve hits 5 at +5 and 20 at +10', async () => {
+    const { enhancePlusDefBonus } = await import('./stats')
+    expect(enhancePlusDefBonus(0)).toBe(0)
+    expect(enhancePlusDefBonus(1)).toBe(1)
+    expect(enhancePlusDefBonus(5)).toBe(5) // 5 * 1
+    expect(enhancePlusDefBonus(6)).toBe(8) // 5*1 + 1*3
+    expect(enhancePlusDefBonus(10)).toBe(20) // 5*1 + 5*3
+  })
+
+  it('Slice 51: per-item primary stat bonuses fold into derived stats before deriving', () => {
+    // Create an item override map with a bonus weapon adding +10 STR + 5 VIT.
+    const itemsOverride: Record<string, import('../types').ItemDef> = {
+      'buff-sword': { name: 'B', emoji: '🗡', type: 'weapon', atk: 5, bonusStr: 10, bonusVit: 5, desc: 'test' },
+    }
+    const g = gsWith({ weapon: { itemKey: 'buff-sword' } }, { lv: 1 })
+    const d = deriveCombatStats(g, { items: itemsOverride })
+    // effStr = 10 + 10 = 20 → pAtk = 20*2 = 40 + weapon atk 5 = 45
+    expect(d.pAtk).toBe(40 + 5)
+    // effVit = 10 + 5 = 15 → maxHp = 50 + 15*10 = 200 (BASE_HP 50)
+    expect(d.maxHp).toBe(BASE_HP + 15 * 10)
+    // pDef from effVit too: floor(15*0.5) = 7
+    expect(d.pDef).toBe(7)
   })
 
   it('clamps current hp/mp to new maxima; falsy current = full', () => {

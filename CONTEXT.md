@@ -74,7 +74,7 @@ _Avoid_: "equip pointer" — that was the rejected Slice 36 model where an item 
 _History_: Slice 33 introduced Transfer. Slice 36 reverted to a Pointer model (Demon-Online style). Slice 46 returned to Transfer (physical move). Slice 47+ refines this further: per-instance identity for gear forces the slot to reference an Inventory Item id (not an itemKey), so "transfer" becomes a display rule rather than a row movement — the item's identity and Plus level can't be lost in transit.
 
 **Plus**:
-A non-negative integer (0..10) attached to a single weapon or armor Inventory Item, representing how many successful Enhance attempts it has accumulated. Each Plus level adds flat stats (weapon: +3 ATK per level; armor: +2 DEF per level). Mat and consume items never carry a Plus. Two Inventory Items of the same itemKey can have different Plus values — that is the whole reason gear is per-instance.
+A non-negative integer (0..10) attached to a single weapon or armor Inventory Item, representing how many successful Enhance attempts it has accumulated. Plus contributes a **step-scaled** bonus to the slot's primary combat stat: `enhancePlusAtkBonus(plus)` for weapon ATK (`+1..+5` = +2 each, `+6..+10` = +5 each, max +35 at +10) and `enhancePlusDefBonus(plus)` for armor DEF (`+1..+5` = +1 each, `+6..+10` = +3 each, max +20 at +10). Mat and consume items never carry a Plus. Two Inventory Items of the same itemKey can have different Plus values — that is the whole reason gear is per-instance. Per-item primary stat bonuses (see Item Stat) are NOT affected by Plus.
 _Avoid_: "+level" (no leading symbol in prose), "refine level" (RO term we don't use), "upgrade" (overloaded with class/race progression).
 
 **Enhance**:
@@ -86,12 +86,12 @@ A new NpcKind that gates Enhance. The Blacksmith refuses to work on equipped ite
 _Avoid_: "smith", "enhancer", "refiner".
 
 **Item Stat**:
-A field on an ItemDef that contributes to a Character's combat stats when the Item is equipped. Which stats fold in depends on the **slot the Item occupies**, not which fields the ItemDef carries:
+A field on an ItemDef that contributes to a Character's combat stats when the Item is equipped. Two flavors:
 
-- A Weapon in `equipWeapon` contributes `atk` and `matk`.
-- An Armor in `equipArmor` contributes `def`.
+- **Slot-typed stats** (Slice 23): Weapon contributes `atk` and `matk`; Armor contributes `def`. Cross-slot values (an `atk` on an Armor) are ignored at runtime. The admin form should not offer fields the slot's contribution rule will ignore.
+- **Primary stat bonuses** (Slice 51): Both Weapons and Armors may carry `bonusStr / bonusInt / bonusDex / bonusAgi / bonusLuk / bonusVit`. These fold into the Character's effective primary stats BEFORE the derived formulas run, so a sword with `bonusVit: 5` raises maxHp, pDef, and every other VIT-derived stat — not just one combat number. Flat — NOT scaled by Plus.
 
-Item Stats that don't match the slot's contribution rule are ignored at runtime (e.g. an `atk` value set on an Armor has no effect). The admin form should not offer slots that the runtime rule will ignore.
+**Plus** scales only `atk` (Weapon) and `def` (Armor) — via the `enhancePlusAtkBonus` / `enhancePlusDefBonus` step curves. Per-item primary bonuses are independent of Plus.
 
 ## Input language
 

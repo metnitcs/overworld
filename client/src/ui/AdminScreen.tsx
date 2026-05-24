@@ -391,6 +391,13 @@ function ItemsTab({ onCount }: { onCount: (n: number) => void }) {
                       it.matk != null && `MATK ${it.matk}`,
                       it.heal != null && `HEAL ${it.heal}`,
                       it.healMp != null && `MP ${it.healMp}`,
+                      // Slice 51: bonus primary stats compact display.
+                      it.bonusStr != null && it.bonusStr !== 0 && `+${it.bonusStr} STR`,
+                      it.bonusInt != null && it.bonusInt !== 0 && `+${it.bonusInt} INT`,
+                      it.bonusDex != null && it.bonusDex !== 0 && `+${it.bonusDex} DEX`,
+                      it.bonusAgi != null && it.bonusAgi !== 0 && `+${it.bonusAgi} AGI`,
+                      it.bonusLuk != null && it.bonusLuk !== 0 && `+${it.bonusLuk} LUK`,
+                      it.bonusVit != null && it.bonusVit !== 0 && `+${it.bonusVit} VIT`,
                     ].filter(Boolean).join(' · ') || '—'}
                   </td>
                   <td className="row-actions">
@@ -423,6 +430,13 @@ function ItemForm({ mode, initial, onSubmit, onCancel }: {
   const [matk, setMatk] = useState<string | number>(initial?.matk ?? '')
   const [heal, setHeal] = useState<string | number>(initial?.heal ?? '')
   const [healMp, setHealMp] = useState<string | number>(initial?.healMp ?? '')
+  // Slice 51: per-item primary stat bonuses.
+  const [bonusStr, setBonusStr] = useState<string | number>(initial?.bonusStr ?? '')
+  const [bonusInt, setBonusInt] = useState<string | number>(initial?.bonusInt ?? '')
+  const [bonusDex, setBonusDex] = useState<string | number>(initial?.bonusDex ?? '')
+  const [bonusAgi, setBonusAgi] = useState<string | number>(initial?.bonusAgi ?? '')
+  const [bonusLuk, setBonusLuk] = useState<string | number>(initial?.bonusLuk ?? '')
+  const [bonusVit, setBonusVit] = useState<string | number>(initial?.bonusVit ?? '')
   const [desc, setDesc] = useState(initial?.desc ?? '')
 
   function num(v: string | number | null): number | null {
@@ -435,6 +449,9 @@ function ItemForm({ mode, initial, onSubmit, onCancel }: {
     // (see showStats below). Filters out stale values that linger in
     // form state when the admin changes type — e.g. flipping weapon →
     // armor leaves the old `atk` value sitting in state.
+    // Slice 51: bonus stats only meaningful on weapon/armor; null out for
+    // mat/consume so a stale form value doesn't ride along.
+    const isGear = type === 'weapon' || type === 'armor'
     const body: AdminItemBody & { id?: string } = {
       name, emoji, type, rarity,
       atk:    type === 'weapon'  ? num(atk)    : null,
@@ -442,6 +459,12 @@ function ItemForm({ mode, initial, onSubmit, onCancel }: {
       matk:   type === 'weapon'  ? num(matk)   : null,
       heal:   type === 'consume' ? num(heal)   : null,
       healMp: type === 'consume' ? num(healMp) : null,
+      bonusStr: isGear ? num(bonusStr) : null,
+      bonusInt: isGear ? num(bonusInt) : null,
+      bonusDex: isGear ? num(bonusDex) : null,
+      bonusAgi: isGear ? num(bonusAgi) : null,
+      bonusLuk: isGear ? num(bonusLuk) : null,
+      bonusVit: isGear ? num(bonusVit) : null,
       desc,
     }
     if (mode === 'create') body.id = id.trim()
@@ -453,12 +476,16 @@ function ItemForm({ mode, initial, onSubmit, onCancel }: {
   // actually reads for the matching equip slot. Weapons contribute atk /
   // matk; armors contribute def. Cross-stat values (atk on armor, def
   // on weapon) were silently ignored at runtime — confusing for admins.
+  // Slice 51: weapon/armor also accept 6 primary stat bonuses (flat,
+  // not Plus-scaled). Mat/consume hide them — same hygiene rule.
+  const isGear = type === 'weapon' || type === 'armor'
   const showStats = {
     atk:    type === 'weapon',
     def:    type === 'armor',
     matk:   type === 'weapon',
     heal:   type === 'consume',
     healMp: type === 'consume',
+    bonuses: isGear,
   }
 
   return (
@@ -498,6 +525,21 @@ function ItemForm({ mode, initial, onSubmit, onCancel }: {
         {showStats.heal   && <Field label="HEAL"><input type="number" value={heal} onChange={(e) => setHeal(e.target.value)} /></Field>}
         {showStats.healMp && <Field label="HEAL MP"><input type="number" value={healMp} onChange={(e) => setHealMp(e.target.value)} /></Field>}
       </div>
+      {showStats.bonuses && (
+        <>
+          <div style={{ marginTop: 12, fontSize: 11, fontWeight: 600, color: '#374151' }}>
+            ✨ Slice 51 — Bonus primary stats (flat, ไม่ scale ตาม Plus)
+          </div>
+          <div className="admin-form-row" style={{ gridTemplateColumns: 'repeat(6, 1fr)', marginTop: 4 }}>
+            <Field label="STR"><input type="number" value={bonusStr} onChange={(e) => setBonusStr(e.target.value)} /></Field>
+            <Field label="INT"><input type="number" value={bonusInt} onChange={(e) => setBonusInt(e.target.value)} /></Field>
+            <Field label="DEX"><input type="number" value={bonusDex} onChange={(e) => setBonusDex(e.target.value)} /></Field>
+            <Field label="AGI"><input type="number" value={bonusAgi} onChange={(e) => setBonusAgi(e.target.value)} /></Field>
+            <Field label="LUK"><input type="number" value={bonusLuk} onChange={(e) => setBonusLuk(e.target.value)} /></Field>
+            <Field label="VIT"><input type="number" value={bonusVit} onChange={(e) => setBonusVit(e.target.value)} /></Field>
+          </div>
+        </>
+      )}
       <Field label="Description">
         <textarea value={desc} onChange={(e) => setDesc(e.target.value)} rows={2} style={{ resize: 'vertical' }} />
       </Field>
@@ -1446,9 +1488,11 @@ function CharacterEditorForm({
         </Field>
       </div>
 
-      {/* Slice 49: per-row inventory table with Set Plus on each gear row. */}
+      {/* Slice 49/50: per-row inventory table with Set Plus + Delete +
+          Add Item form. */}
       <CharacterInventoryEditor
         token={token}
+        characterId={initial.id}
         items={items}
         rows={inventory}
         equipWeaponId={initial.equipWeapon}
@@ -1456,6 +1500,8 @@ function CharacterEditorForm({
         onRowUpdated={(updated) =>
           setInventory((prev) => prev.map((r) => (r.id === updated.id ? { ...r, plus: updated.plus } : r)))
         }
+        onRowDeleted={(id) => setInventory((prev) => prev.filter((r) => r.id !== id))}
+        onInventoryReplaced={(rows) => setInventory(rows)}
       />
 
       {jsonErr && <Toast msg={jsonErr} kind="err" />}
@@ -1468,25 +1514,58 @@ function CharacterEditorForm({
   )
 }
 
-/** Slice 49: per-row inventory table inside the character editor.
- *  Read-only for mat/consume (qty only); weapon/armor get a `Set Plus`
- *  select that POSTs to `/api/admin/inventory/:itemId/set-plus` and
- *  bubbles the updated row back to the parent. Server re-derives the
- *  owner's atk/def/spd as part of the same transaction, so the next
- *  character GET picks up the new cached value. */
+/** Slice 49/50: per-row inventory table + Add Item form inside the
+ *  character editor. Read-only for mat/consume (qty only); weapon/armor
+ *  get a `Set Plus` select. Each row has a `🗑` delete button.
+ *
+ *  Set-Plus POSTs to `/api/admin/inventory/:itemId/set-plus`. Add posts to
+ *  `/api/admin/inventory` and replaces the local row list with the fresh
+ *  server response. Delete posts to `/api/admin/inventory/:itemId` and
+ *  filters the row out locally. All three are audited server-side. */
 function CharacterInventoryEditor({
-  token, items, rows, equipWeaponId, equipArmorId, onRowUpdated,
+  token, characterId, items, rows, equipWeaponId, equipArmorId,
+  onRowUpdated, onRowDeleted, onInventoryReplaced,
 }: {
   token: string
+  characterId: string
   items: AdminItemRow[]
   rows: Array<{ id: string; itemKey: string; qty: number; plus: number }>
   equipWeaponId: string | null
   equipArmorId: string | null
   onRowUpdated: (row: { id: string; itemKey: string; qty: number; plus: number }) => void
+  onRowDeleted: (id: string) => void
+  onInventoryReplaced: (rows: Array<{ id: string; itemKey: string; qty: number; plus: number }>) => void
 }) {
   const [busyId, setBusyId] = useState<string | null>(null)
   const [err, setErr] = useState<string | null>(null)
   const byKey = new Map(items.map((it) => [it.id, it]))
+
+  // Slice 50: Add Item form local state.
+  const sortedItems = [...items].sort((a, b) => a.id.localeCompare(b.id))
+  const [addKey, setAddKey] = useState<string>(sortedItems[0]?.id ?? '')
+  const [addQty, setAddQty] = useState<number>(1)
+  const [addPlus, setAddPlus] = useState<number>(0)
+  const [adding, setAdding] = useState(false)
+  // Slice 50.1: filter the item picker by id / name / type so a GM with
+  // 30+ items can find "sword" or "potion" without scrolling. Match is
+  // case-insensitive substring on id, name, AND type — so typing
+  // "weapon" narrows the list to all weapons.
+  const [addSearch, setAddSearch] = useState<string>('')
+  const search = addSearch.trim().toLowerCase()
+  const filteredItems = search === ''
+    ? sortedItems
+    : sortedItems.filter((it) =>
+        it.id.toLowerCase().includes(search) ||
+        it.name.toLowerCase().includes(search) ||
+        it.type.toLowerCase().includes(search))
+  // If the currently-selected key falls out of the filter, snap to the
+  // first match so the form is always in a submittable state. Empty
+  // filter result is handled separately in the render branch.
+  const effectiveAddKey = filteredItems.some((it) => it.id === addKey)
+    ? addKey
+    : (filteredItems[0]?.id ?? '')
+  const addDef = items.find((it) => it.id === effectiveAddKey)
+  const addIsGear = addDef?.type === 'weapon' || addDef?.type === 'armor'
 
   async function setPlus(rowId: string, plus: number) {
     setBusyId(rowId)
@@ -1501,62 +1580,167 @@ function CharacterInventoryEditor({
     }
   }
 
-  if (rows.length === 0) {
-    return (
-      <div style={{ marginTop: 12, fontSize: 12, color: '#6b7280' }}>
-        ของในกระเป๋า: (ว่าง). Add-Item flow ยังไม่ทำ — Slice 50+.
-      </div>
-    )
+  async function deleteRow(rowId: string) {
+    setBusyId(rowId)
+    setErr(null)
+    try {
+      await api.adminDeleteInventoryItem(token, rowId)
+      onRowDeleted(rowId)
+    } catch (e) {
+      setErr(`delete failed: ${e instanceof Error ? e.message : String(e)}`)
+    } finally {
+      setBusyId(null)
+    }
+  }
+
+  async function addItem() {
+    if (!effectiveAddKey) return
+    setAdding(true)
+    setErr(null)
+    try {
+      const r = await api.adminAddItem(token, {
+        characterId, itemKey: effectiveAddKey, qty: addQty,
+        ...(addIsGear ? { plus: addPlus } : {}),
+      })
+      onInventoryReplaced(r.inventory)
+    } catch (e) {
+      setErr(`add failed: ${e instanceof Error ? e.message : String(e)}`)
+    } finally {
+      setAdding(false)
+    }
   }
 
   return (
     <div style={{ marginTop: 12 }}>
       <div style={{ fontSize: 12, color: '#374151', fontWeight: 600, marginBottom: 4 }}>
-        ของในกระเป๋า ({rows.length} แถว) — กดเลือก Plus แล้ว server จะ re-derive atk/def ทันที
+        ของในกระเป๋า ({rows.length} แถว) — Plus / Delete / Add ทุกอย่าง server re-derive + audit ให้
       </div>
-      <table className="admin-table" style={{ fontSize: 11 }}>
-        <thead>
-          <tr>
-            <th>Item</th>
-            <th>Type</th>
-            <th>Qty</th>
-            <th>Plus</th>
-            <th>Equipped</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row) => {
-            const def = byKey.get(row.itemKey)
-            const isGear = def?.type === 'weapon' || def?.type === 'armor'
-            const equipped =
-              row.id === equipWeaponId ? '⚔ weapon' :
-              row.id === equipArmorId ? '🛡 armor' : ''
-            return (
-              <tr key={row.id}>
-                <td>{def?.emoji ?? '❔'} {row.itemKey}</td>
-                <td>{def?.type ?? '?'}</td>
-                <td>{row.qty}</td>
-                <td>
-                  {isGear ? (
-                    <select
-                      value={row.plus}
+
+      {rows.length > 0 ? (
+        <table className="admin-table" style={{ fontSize: 11 }}>
+          <thead>
+            <tr>
+              <th>Item</th>
+              <th>Type</th>
+              <th>Qty</th>
+              <th>Plus</th>
+              <th>Equipped</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => {
+              const def = byKey.get(row.itemKey)
+              const isGear = def?.type === 'weapon' || def?.type === 'armor'
+              const equipped =
+                row.id === equipWeaponId ? '⚔ weapon' :
+                row.id === equipArmorId ? '🛡 armor' : ''
+              return (
+                <tr key={row.id}>
+                  <td>{def?.emoji ?? '❔'} {row.itemKey}</td>
+                  <td>{def?.type ?? '?'}</td>
+                  <td>{row.qty}</td>
+                  <td>
+                    {isGear ? (
+                      <select
+                        value={row.plus}
+                        disabled={busyId === row.id}
+                        onChange={(e) => void setPlus(row.id, Number(e.target.value))}
+                      >
+                        {Array.from({ length: 11 }, (_, i) => (
+                          <option key={i} value={i}>+{i}</option>
+                        ))}
+                      </select>
+                    ) : (
+                      <span style={{ color: '#9ca3af' }}>—</span>
+                    )}
+                  </td>
+                  <td>{equipped}</td>
+                  <td>
+                    <button
+                      type="button"
+                      className="btn-a btn-a-small btn-a-danger"
                       disabled={busyId === row.id}
-                      onChange={(e) => void setPlus(row.id, Number(e.target.value))}
-                    >
-                      {Array.from({ length: 11 }, (_, i) => (
-                        <option key={i} value={i}>+{i}</option>
-                      ))}
-                    </select>
-                  ) : (
-                    <span style={{ color: '#9ca3af' }}>—</span>
-                  )}
-                </td>
-                <td>{equipped}</td>
-              </tr>
-            )
-          })}
-        </tbody>
-      </table>
+                      onClick={() => void deleteRow(row.id)}
+                      title={equipped ? 'จะถอด + ลบของ + re-derive atk' : 'ลบของออกจากกระเป๋า'}
+                    >🗑</button>
+                  </td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      ) : (
+        <div style={{ fontSize: 11, color: '#6b7280' }}>(กระเป๋าว่าง)</div>
+      )}
+
+      {/* Slice 50: Add Item form (with Slice 50.1 filter search) */}
+      <div style={{
+        marginTop: 8, padding: '8px 10px', background: '#f9fafb',
+        border: '1px solid #e5e7eb', borderRadius: 4,
+      }}>
+        <div style={{ fontSize: 11, fontWeight: 600, color: '#374151', marginBottom: 4 }}>
+          ➕ เพิ่มของให้ตัวละครนี้
+        </div>
+        <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+          <input
+            type="search"
+            placeholder="🔎 กรอง id / ชื่อ / type (เช่น sword, potion, weapon)"
+            value={addSearch}
+            onChange={(e) => setAddSearch(e.target.value)}
+            style={{ fontSize: 11, minWidth: 240, padding: '2px 6px' }}
+          />
+          <select
+            value={effectiveAddKey}
+            onChange={(e) => setAddKey(e.target.value)}
+            disabled={filteredItems.length === 0}
+            style={{ fontSize: 11, minWidth: 220 }}
+          >
+            {filteredItems.length === 0 ? (
+              <option value="">— ไม่พบของที่ตรงกับตัวกรอง —</option>
+            ) : filteredItems.map((it) => (
+              <option key={it.id} value={it.id}>
+                {it.emoji} {it.id} — {it.name} ({it.type})
+              </option>
+            ))}
+          </select>
+          <span style={{ fontSize: 10, color: '#6b7280' }}>
+            {filteredItems.length}/{sortedItems.length} ชิ้น
+          </span>
+          <label style={{ fontSize: 11 }}>
+            qty:{' '}
+            <input
+              type="number" min={1} max={99} value={addQty}
+              onChange={(e) => setAddQty(Math.max(1, Math.min(99, Number(e.target.value) || 1)))}
+              style={{ width: 56, fontSize: 11 }}
+            />
+          </label>
+          {addIsGear && (
+            <label style={{ fontSize: 11 }}>
+              plus:{' '}
+              <select value={addPlus} onChange={(e) => setAddPlus(Number(e.target.value))} style={{ fontSize: 11 }}>
+                {Array.from({ length: 11 }, (_, i) => (
+                  <option key={i} value={i}>+{i}</option>
+                ))}
+              </select>
+            </label>
+          )}
+          <button
+            type="button"
+            className="btn-a btn-a-small btn-a-primary"
+            disabled={adding || !effectiveAddKey}
+            onClick={() => void addItem()}
+          >
+            {adding ? 'กำลังเพิ่ม…' : 'เพิ่ม'}
+          </button>
+        </div>
+        {addIsGear && (
+          <div style={{ marginTop: 4, fontSize: 10, color: '#6b7280' }}>
+            qty={addQty} → จะสร้าง {addQty} row ของ {addDef?.name} ที่ +{addPlus} แต่ละชิ้น
+          </div>
+        )}
+      </div>
+
       {err && <Toast msg={err} kind="err" />}
     </div>
   )

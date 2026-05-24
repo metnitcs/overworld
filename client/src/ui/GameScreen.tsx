@@ -3,7 +3,7 @@ import {
   useGame, seedChat,
   subscribeSaveStatus, getSaveStatus, type SaveStatus,
 } from '../game/store'
-import { expForLv } from '@asura/shared'
+import { expForLv, enhancePlusAtkBonus, enhancePlusDefBonus } from '@asura/shared'
 import { useRaces, useClasses } from '../game/store'
 import { PhaserGame } from '../game/PhaserGame'
 import { ChatPanel } from './ChatPanel'
@@ -231,21 +231,20 @@ function EquippedPanel() {
           เปลี่ยน
         </button>
       </div>
-      <EquipSlot icon="⚔" label="อาวุธ" item={w} plus={wPlus} statKey="atk" plusMult={3} />
-      <EquipSlot icon="🛡" label="เกราะ" item={a} plus={aPlus} statKey="def" plusMult={2} />
+      <EquipSlot icon="⚔" label="อาวุธ" item={w} plus={wPlus} statKey="atk" />
+      <EquipSlot icon="🛡" label="เกราะ" item={a} plus={aPlus} statKey="def" />
     </div>
   )
 }
 
 function EquipSlot({
-  icon, label, item, plus, statKey, plusMult,
+  icon, label, item, plus, statKey,
 }: {
   icon: string
   label: string
   item: { name: string; emoji: string; atk?: number; def?: number; matk?: number } | null
   plus: number
   statKey: 'atk' | 'def'
-  plusMult: number
 }) {
   if (!item) {
     return (
@@ -257,7 +256,9 @@ function EquipSlot({
     )
   }
   const base = item[statKey] || 0
-  const plusBonus = plus * plusMult
+  // Slice 51: step scaling — use the canonical helpers so this display
+  // always matches what deriveStats actually folds in.
+  const plusBonus = statKey === 'atk' ? enhancePlusAtkBonus(plus) : enhancePlusDefBonus(plus)
   const total = base + plusBonus
   return (
     <div className="flex items-center gap-2 mt-1 px-1.5 py-1 rounded bg-white border border-kw-border text-[11px]">

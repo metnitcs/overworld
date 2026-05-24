@@ -1,5 +1,5 @@
 import { useGame } from '../../game/store'
-import { enhanceGoldCost } from '@asura/shared'
+import { enhanceGoldCost, enhancePlusAtkBonus, enhancePlusDefBonus } from '@asura/shared'
 
 /** Slice 48: Blacksmith ceremony. Opens when the player steps on a
  *  blacksmith NPC tile. Lists weapon/armor rows in the bag (filters out
@@ -64,7 +64,12 @@ export function BlacksmithModal() {
         const maxed = cur >= 10
         const can = !maxed && stoneCount >= stoneCost && game.gold >= goldCost
         const slotIcon = it.type === 'weapon' ? '⚔' : '🛡'
-        const statText = it.type === 'weapon' ? 'ATK +3' : 'DEF +2'
+        // Slice 51: per-attempt gain depends on the tier. +1..+5 step is
+        // smaller; +6..+10 jackpot. Show actual delta for the NEXT level.
+        const nextGain = it.type === 'weapon'
+          ? enhancePlusAtkBonus(cur + 1) - enhancePlusAtkBonus(cur)
+          : enhancePlusDefBonus(cur + 1) - enhancePlusDefBonus(cur)
+        const statText = it.type === 'weapon' ? `ATK +${nextGain}` : `DEF +${nextGain}`
         return (
           <div key={row.id} className="panel panel-pad flex items-center gap-3">
             <div className="text-3xl">{it.emoji}</div>
@@ -80,7 +85,7 @@ export function BlacksmithModal() {
                 ใช้ 💠 {stoneCost} · 💰 {goldCost.toLocaleString()}
               </div>
               <div className="text-kw-text-dim">
-                เพิ่ม {statText} ต่อระดับ
+                สำเร็จ → {statText} (step: +1..+5 น้อย / +6..+10 jackpot)
                 {cur >= 5 && <span className="text-red-600"> · ล้มเหลวอาจลดบวก!</span>}
               </div>
             </div>

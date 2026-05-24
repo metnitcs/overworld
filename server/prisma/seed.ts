@@ -33,10 +33,16 @@ async function seedItems(): Promise<number> {
         matk: def.matk ?? null,
         heal: def.heal ?? null,
         healMp: def.healMp ?? null,
+        // Slice 51: per-item primary stat bonuses.
+        bonusStr: def.bonusStr ?? null,
+        bonusInt: def.bonusInt ?? null,
+        bonusDex: def.bonusDex ?? null,
+        bonusAgi: def.bonusAgi ?? null,
+        bonusLuk: def.bonusLuk ?? null,
+        bonusVit: def.bonusVit ?? null,
         desc: def.desc,
       },
       update: {
-        // Update only mutable display fields; do not touch the id.
         name: def.name,
         emoji: def.emoji,
         type: def.type as ItemType,
@@ -46,6 +52,12 @@ async function seedItems(): Promise<number> {
         matk: def.matk ?? null,
         heal: def.heal ?? null,
         healMp: def.healMp ?? null,
+        bonusStr: def.bonusStr ?? null,
+        bonusInt: def.bonusInt ?? null,
+        bonusDex: def.bonusDex ?? null,
+        bonusAgi: def.bonusAgi ?? null,
+        bonusLuk: def.bonusLuk ?? null,
+        bonusVit: def.bonusVit ?? null,
         desc: def.desc,
       },
     })

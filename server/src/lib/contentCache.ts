@@ -121,6 +121,14 @@ function toItemDef(row: PrismaItem): ItemDef {
     matk: row.matk ?? undefined,
     heal: row.heal ?? undefined,
     healMp: row.healMp ?? undefined,
+    // Slice 51: primary stat bonuses pass through verbatim (null → undefined
+    // so the optional types on ItemDef stay clean).
+    bonusStr: row.bonusStr ?? undefined,
+    bonusInt: row.bonusInt ?? undefined,
+    bonusDex: row.bonusDex ?? undefined,
+    bonusAgi: row.bonusAgi ?? undefined,
+    bonusLuk: row.bonusLuk ?? undefined,
+    bonusVit: row.bonusVit ?? undefined,
     desc: row.desc,
   }
 }

@@ -1,9 +1,8 @@
 import type { FastifyInstance } from 'fastify'
-import type { Prisma, PrismaClient } from '@prisma/client'
 import type { Character, InventoryItem as PrismaInventoryItem } from '@prisma/client'
 import { z } from 'zod'
 import {
-  deriveStats, type GameState, type InventoryItem, type ItemDef,
+  deriveStats, type GameState, type InventoryItem,
   CHARACTER_SLOT_LIMIT, TRANSCEND_LV,
   CLASS_CHANGE_LV,
   STAT_BASE, STAT_HARD_CAP,
@@ -13,45 +12,9 @@ import {
   resolveEnhance, applyExp, expForLv,
   type PrimaryStat,
 } from '@asura/shared'
-
-/** Slice 47: stack-policy helper. Weapon/armor are per-instance — always
- *  INSERT a fresh InventoryItem row (qty=1, plus=0) so each physical item
- *  carries its own Plus. Mat/consume stack — upsert by (characterId, itemKey).
- *  Falls back to per-instance if the ItemDef is unknown (defensive — should
- *  never happen because every itemKey we add originated from the catalog). */
-type Tx = Prisma.TransactionClient | PrismaClient
-async function addItem(
-  tx: Tx,
-  characterId: string,
-  itemKey: string,
-  qty: number,
-  items: Record<string, ItemDef>,
-): Promise<void> {
-  if (qty <= 0) return
-  const def = items[itemKey]
-  const stackable = def?.type === 'mat' || def?.type === 'consume'
-  if (stackable) {
-    const existing = await tx.inventoryItem.findFirst({
-      where: { characterId, itemKey },
-    })
-    if (existing) {
-      await tx.inventoryItem.update({
-        where: { id: existing.id }, data: { qty: existing.qty + qty },
-      })
-    } else {
-      await tx.inventoryItem.create({
-        data: { characterId, itemKey, qty },
-      })
-    }
-  } else {
-    // Per-instance — N rows, qty=1 each. Plus defaults to 0.
-    for (let i = 0; i < qty; i++) {
-      await tx.inventoryItem.create({
-        data: { characterId, itemKey, qty: 1, plus: 0 },
-      })
-    }
-  }
-}
+// Slice 50: addItem extracted to lib/inventory.ts so admin GM-grant
+// endpoints can reuse the same stack-policy rule.
+import { addItem } from '../lib/inventory.js'
 // Slice 28: race + class data lives in DB now (admin-editable). Server
 // reads it via app.contentCache instead of the static @asura/shared
 // imports. The shared package still ships RACES/CLASSES as the SEED

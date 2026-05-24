@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useGame } from '../../game/store'
-import type { Rarity } from '@asura/shared'
+import { enhancePlusAtkBonus, enhancePlusDefBonus, type Rarity } from '@asura/shared'
 
 type Tab = 'all' | 'equip' | 'consume' | 'mat'
 
@@ -82,7 +82,7 @@ export function InventoryModal() {
                 {wPlus > 0 && <span className="text-kw-red ml-1">+{wPlus}</span>}
               </div>
               <div className="text-[10px] text-kw-text-dim">
-                ATK +{(wItem.atk || 0) + wPlus * 3}
+                ATK +{(wItem.atk || 0) + enhancePlusAtkBonus(wPlus)}
               </div>
             </div>
           ) : (
@@ -101,7 +101,7 @@ export function InventoryModal() {
                 {aPlus > 0 && <span className="text-kw-red ml-1">+{aPlus}</span>}
               </div>
               <div className="text-[10px] text-kw-text-dim">
-                DEF +{(aItem.def || 0) + aPlus * 2}
+                DEF +{(aItem.def || 0) + enhancePlusDefBonus(aPlus)}
               </div>
             </div>
           ) : (
@@ -166,11 +166,24 @@ export function InventoryModal() {
               </div>
               <div className="text-xs text-kw-text-dim mt-0.5">{selItem.desc}</div>
               <div className="text-xs text-kw-blue-deep mt-1 font-semibold">
-                {selItem.atk && `ATK +${selItem.atk}${selPlus > 0 ? ` (+${selPlus * 3} จากบวก)` : ''} `}
-                {selItem.def && `DEF +${selItem.def}${selPlus > 0 ? ` (+${selPlus * 2} จากบวก)` : ''} `}
+                {selItem.atk != null && selItem.atk !== 0 && `ATK +${selItem.atk}${selPlus > 0 ? ` (+${enhancePlusAtkBonus(selPlus)} จากบวก)` : ''} `}
+                {selItem.def != null && selItem.def !== 0 && `DEF +${selItem.def}${selPlus > 0 ? ` (+${enhancePlusDefBonus(selPlus)} จากบวก)` : ''} `}
                 {selItem.heal && `ฟื้น ${selItem.heal} HP `}
                 {selItem.healMp && `ฟื้น ${selItem.healMp} MP `}
               </div>
+              {/* Slice 51: per-item primary stat bonuses (flat). */}
+              {(selItem.bonusStr || selItem.bonusInt || selItem.bonusDex || selItem.bonusAgi || selItem.bonusLuk || selItem.bonusVit) ? (
+                <div className="text-[10px] text-kw-orange mt-0.5">
+                  ✨ Bonus: {[
+                    selItem.bonusStr && `+${selItem.bonusStr} STR`,
+                    selItem.bonusInt && `+${selItem.bonusInt} INT`,
+                    selItem.bonusDex && `+${selItem.bonusDex} DEX`,
+                    selItem.bonusAgi && `+${selItem.bonusAgi} AGI`,
+                    selItem.bonusLuk && `+${selItem.bonusLuk} LUK`,
+                    selItem.bonusVit && `+${selItem.bonusVit} VIT`,
+                  ].filter(Boolean).join(' · ')}
+                </div>
+              ) : null}
               <div className="text-xs mt-1 text-kw-text-dim">มี {sel.qty} ชิ้น</div>
             </div>
             <div className="flex flex-col gap-1">

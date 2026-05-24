@@ -211,6 +211,17 @@ model Item {
   matk         Int?
   heal         Int?
   healMp       Int?
+  /// Slice 51: primary stat bonuses that ride along with an equipped
+  /// weapon or armor. Flat — NOT scaled by Plus (per the design call;
+  /// Plus only scales atk for weapons and def for armor). When set on a
+  /// mat/consume the runtime ignores them (only equip slots fold these
+  /// in via deriveStats). See CONTEXT.md "Item Stat".
+  bonusStr     Int?
+  bonusInt     Int?
+  bonusDex     Int?
+  bonusAgi     Int?
+  bonusLuk     Int?
+  bonusVit     Int?
   desc         String
   monsterDrops MonsterDrop[]
   shopItems    ShopItem[]

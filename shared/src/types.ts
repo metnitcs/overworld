@@ -200,6 +200,17 @@ export interface ItemDef {
   matk?: number
   heal?: number
   healMp?: number
+  /** Slice 51: primary stat bonuses that ride along with an equipped
+   *  weapon or armor (flat — NOT scaled by Plus). When the item is in
+   *  the bag (not equipped) these have no effect. Mat/consume should
+   *  leave them undefined — the runtime ignores them anyway, but the
+   *  admin form hides the fields for those types so they never get set. */
+  bonusStr?: number
+  bonusInt?: number
+  bonusDex?: number
+  bonusAgi?: number
+  bonusLuk?: number
+  bonusVit?: number
   desc: string
 }
 
