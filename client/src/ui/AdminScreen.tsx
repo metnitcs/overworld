@@ -230,10 +230,16 @@ const RANK_PILL: Record<AdminMonsterRank, string> = {
 const ITEM_TYPES: AdminItemType[] = ['mat', 'consume', 'weapon', 'armor']
 const RARITIES: AdminRarity[] = ['common', 'rare', 'epic', 'legendary']
 const ITEM_TYPE_META: Array<{ id: AdminItemType; label: string; icon: string }> = [
-  { id: 'mat',     label: 'วัตถุดิบ',  icon: '🧵' },
-  { id: 'consume', label: 'ใช้แล้วหมด', icon: '🧪' },
-  { id: 'weapon',  label: 'อาวุธ',     icon: '⚔️' },
-  { id: 'armor',   label: 'เกราะ',     icon: '🛡' },
+  { id: 'mat',      label: 'วัตถุดิบ',  icon: '🧵' },
+  { id: 'consume',  label: 'ใช้แล้วหมด', icon: '🧪' },
+  { id: 'weapon',   label: 'อาวุธ',     icon: '⚔️' },
+  { id: 'armor',    label: 'เกราะ',     icon: '🥋' },
+  { id: 'shield',   label: 'โล่',       icon: '🛡' },
+  { id: 'helmet',   label: 'หมวก',      icon: '⛑️' },
+  { id: 'boots',    label: 'รองเท้า',   icon: '👢' },
+  { id: 'cloak',    label: 'ผ้าคลุม',   icon: '🧥' },
+  { id: 'necklace', label: 'สร้อยคอ',   icon: '📿' },
+  { id: 'ring',     label: 'แหวน',      icon: '💍' },
 ]
 
 function ItemsTab({ onCount }: { onCount: (n: number) => void }) {
@@ -257,7 +263,12 @@ function ItemsTab({ onCount }: { onCount: (n: number) => void }) {
   /** Per-type / per-rarity counts for filter chips. Computed from the full
    *  item list so the badge always reflects the total, not the filtered view. */
   const typeCounts = useMemo(() => {
-    const counts: Record<AdminItemType, number> = { mat: 0, consume: 0, weapon: 0, armor: 0 }
+    // Slice 52a: 10 ItemType values.
+    const counts: Record<AdminItemType, number> = {
+      mat: 0, consume: 0,
+      weapon: 0, armor: 0, shield: 0, helmet: 0,
+      boots: 0, cloak: 0, necklace: 0, ring: 0,
+    }
     if (!items) return counts
     for (const i of items) counts[i.type]++
     return counts
@@ -449,13 +460,17 @@ function ItemForm({ mode, initial, onSubmit, onCancel }: {
     // (see showStats below). Filters out stale values that linger in
     // form state when the admin changes type — e.g. flipping weapon →
     // armor leaves the old `atk` value sitting in state.
-    // Slice 51: bonus stats only meaningful on weapon/armor; null out for
-    // mat/consume so a stale form value doesn't ride along.
-    const isGear = type === 'weapon' || type === 'armor'
+    // Slice 51: bonus stats only meaningful on equippable gear.
+    // Slice 52a: 8 gear types accept bonus stats. def field valid for
+    // armor / shield / helmet (the three Plus-enhanceable defense slots).
+    const isGear = type === 'weapon' || type === 'armor' || type === 'shield'
+      || type === 'helmet' || type === 'boots' || type === 'cloak'
+      || type === 'necklace' || type === 'ring'
+    const hasDef = type === 'armor' || type === 'shield' || type === 'helmet'
     const body: AdminItemBody & { id?: string } = {
       name, emoji, type, rarity,
       atk:    type === 'weapon'  ? num(atk)    : null,
-      def:    type === 'armor'   ? num(def)    : null,
+      def:    hasDef             ? num(def)    : null,
       matk:   type === 'weapon'  ? num(matk)   : null,
       heal:   type === 'consume' ? num(heal)   : null,
       healMp: type === 'consume' ? num(healMp) : null,
@@ -473,16 +488,22 @@ function ItemForm({ mode, initial, onSubmit, onCancel }: {
 
   // Which stat fields make sense per item type — see CONTEXT.md "Item Stat".
   // Slice 46: tightened so the form only offers fields that deriveStats
-  // actually reads for the matching equip slot. Weapons contribute atk /
-  // matk; armors contribute def. Cross-stat values (atk on armor, def
-  // on weapon) were silently ignored at runtime — confusing for admins.
-  // Slice 51: weapon/armor also accept 6 primary stat bonuses (flat,
-  // not Plus-scaled). Mat/consume hide them — same hygiene rule.
-  const isGear = type === 'weapon' || type === 'armor'
+  // actually reads for the matching equip slot.
+  // Slice 51: weapon/armor accept 6 primary stat bonuses (flat, not
+  // Plus-scaled). Mat/consume hide them.
+  // Slice 52a: 7 new equip types added. Contribution rule:
+  //   weapon          → atk + matk (Plus step on atk)
+  //   armor / shield / helmet → def (Plus step on def)
+  //   boots / cloak / necklace / ring → no slot-typed contribution
+  //                    (deliver via bonusXxx cascade only — Slice 51)
+  // All 8 gear types can carry the 6 primary stat bonus fields.
+  const isGear = type === 'weapon' || type === 'armor' || type === 'shield'
+    || type === 'helmet' || type === 'boots' || type === 'cloak'
+    || type === 'necklace' || type === 'ring'
   const showStats = {
     atk:    type === 'weapon',
-    def:    type === 'armor',
     matk:   type === 'weapon',
+    def:    type === 'armor' || type === 'shield' || type === 'helmet',
     heal:   type === 'consume',
     healMp: type === 'consume',
     bonuses: isGear,

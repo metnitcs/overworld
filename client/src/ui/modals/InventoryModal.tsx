@@ -45,13 +45,16 @@ export function InventoryModal() {
   // Slice 47: selection is per-instance — track the InventoryItem.id.
   const [selectedId, setSelectedId] = useState<string | null>(null)
 
-  // Slice 47: bag list filters out the rows currently in equip slots so
-  // the player never sees the equipped item twice (Transfer model, logical).
-  const bagRows = game.inventory.filter(
-    (r) => r.id !== game.equipWeapon && r.id !== game.equipArmor,
-  )
+  // Slice 47 / Slice 52a: bag list filters out the rows currently in any
+  // of the 9 equip slots so the player never sees the equipped item twice.
+  const ALL_EQUIP_TYPES = ['weapon', 'armor', 'shield', 'helmet', 'boots', 'cloak', 'necklace', 'ring']
+  const equippedIds = [
+    game.equipWeapon, game.equipArmor, game.equipShield, game.equipHelmet,
+    game.equipBoots, game.equipCloak, game.equipNecklace, game.equipRing1, game.equipRing2,
+  ]
+  const bagRows = game.inventory.filter((r) => !equippedIds.includes(r.id))
   let visibleRows = bagRows
-  if (tab === 'equip')   visibleRows = bagRows.filter((r) => ['weapon', 'armor'].includes(items[r.itemKey]?.type ?? ''))
+  if (tab === 'equip')   visibleRows = bagRows.filter((r) => ALL_EQUIP_TYPES.includes(items[r.itemKey]?.type ?? ''))
   if (tab === 'consume') visibleRows = bagRows.filter((r) => items[r.itemKey]?.type === 'consume')
   if (tab === 'mat')     visibleRows = bagRows.filter((r) => items[r.itemKey]?.type === 'mat')
   visibleRows = sortInvForDisplay(visibleRows)
@@ -59,58 +62,85 @@ export function InventoryModal() {
   const sel = selectedId ? game.inventory.find((r) => r.id === selectedId) : null
   const selItem = sel ? items[sel.itemKey] : null
   const selPlus = sel?.plus ?? 0
-  const equipped = sel ? (sel.id === game.equipWeapon || sel.id === game.equipArmor) : false
+  const equipped = sel ? equippedIds.includes(sel.id) : false
   const selRarity: Rarity = selItem?.rarity ?? 'common'
 
-  const weaponRow = game.equipWeapon ? game.inventory.find((r) => r.id === game.equipWeapon) : null
-  const armorRow  = game.equipArmor  ? game.inventory.find((r) => r.id === game.equipArmor)  : null
-  const wItem = weaponRow ? items[weaponRow.itemKey] : null
-  const aItem = armorRow  ? items[armorRow.itemKey]  : null
-  const wPlus = weaponRow?.plus ?? 0
-  const aPlus = armorRow?.plus  ?? 0
+  // Slice 52a: 9-slot equipped banner. Each slot resolves its row + def.
+  // For matching click→unequip, slot name has to be passed (not item type
+  // — because ring1 vs ring2 share the same type).
+  type SlotName = 'weapon' | 'armor' | 'shield' | 'helmet' | 'boots' | 'cloak' | 'necklace' | 'ring1' | 'ring2'
+  const SLOT_DISPLAY: Array<{ slot: SlotName; icon: string; label: string }> = [
+    { slot: 'weapon',   icon: '⚔',   label: 'อาวุธ' },
+    { slot: 'armor',    icon: '🥋',  label: 'เกราะ' },
+    { slot: 'shield',   icon: '🛡',  label: 'โล่' },
+    { slot: 'helmet',   icon: '⛑️', label: 'หมวก' },
+    { slot: 'boots',    icon: '👢',  label: 'รองเท้า' },
+    { slot: 'cloak',    icon: '🧥',  label: 'ผ้าคลุม' },
+    { slot: 'necklace', icon: '📿',  label: 'สร้อยคอ' },
+    { slot: 'ring1',    icon: '💍',  label: 'แหวน ซ้าย' },
+    { slot: 'ring2',    icon: '💍',  label: 'แหวน ขวา' },
+  ]
+  const slotRow = (s: SlotName) => {
+    const id = (
+      s === 'weapon' ? game.equipWeapon :
+      s === 'armor'  ? game.equipArmor :
+      s === 'shield' ? game.equipShield :
+      s === 'helmet' ? game.equipHelmet :
+      s === 'boots'  ? game.equipBoots :
+      s === 'cloak'  ? game.equipCloak :
+      s === 'necklace' ? game.equipNecklace :
+      s === 'ring1'  ? game.equipRing1 : game.equipRing2
+    )
+    return id ? game.inventory.find((r) => r.id === id) ?? null : null
+  }
 
   return (
     <div className="flex flex-col gap-2">
-      {/* Equipped banner */}
-      <div className="grid grid-cols-2 gap-2 px-1">
-        <div className="flex items-center gap-2 px-2 py-1.5 bg-white border-2 border-kw-border rounded text-[11px]">
-          <span className="text-xl">⚔</span>
-          {wItem ? (
-            <div className="flex-1 min-w-0">
-              <div className="font-bold text-kw-blue-deep truncate">
-                {wItem.emoji} {wItem.name}
-                {wPlus > 0 && <span className="text-kw-red ml-1">+{wPlus}</span>}
-              </div>
-              <div className="text-[10px] text-kw-text-dim">
-                ATK +{(wItem.atk || 0) + enhancePlusAtkBonus(wPlus)}
-              </div>
+      {/* Slice 52a: 9-slot equipped grid (3 columns × 3 rows). */}
+      <div className="grid grid-cols-3 gap-1 px-1">
+        {SLOT_DISPLAY.map(({ slot, icon, label }) => {
+          const row = slotRow(slot)
+          const it = row ? items[row.itemKey] : null
+          const plus = row?.plus ?? 0
+          // Slot-typed stat preview line (Slice 52a contribution rule).
+          let statLine: string | null = null
+          if (it) {
+            if (slot === 'weapon' && it.atk != null) {
+              statLine = `ATK +${(it.atk || 0) + enhancePlusAtkBonus(plus)}`
+            } else if ((slot === 'armor' || slot === 'shield' || slot === 'helmet') && it.def != null) {
+              statLine = `DEF +${(it.def || 0) + enhancePlusDefBonus(plus)}`
+            } else {
+              // boots/cloak/necklace/ring — bonus cascade only; show first non-zero.
+              const bonus =
+                (it.bonusStr && `+${it.bonusStr} STR`) ||
+                (it.bonusInt && `+${it.bonusInt} INT`) ||
+                (it.bonusDex && `+${it.bonusDex} DEX`) ||
+                (it.bonusAgi && `+${it.bonusAgi} AGI`) ||
+                (it.bonusLuk && `+${it.bonusLuk} LUK`) ||
+                (it.bonusVit && `+${it.bonusVit} VIT`) || null
+              if (bonus) statLine = bonus
+            }
+          }
+          return (
+            <div key={slot} className="flex items-center gap-1.5 px-1.5 py-1 bg-white border-2 border-kw-border rounded text-[10px]">
+              <span className="text-base">{icon}</span>
+              {it ? (
+                <div className="flex-1 min-w-0">
+                  <div className="font-bold text-kw-blue-deep truncate">
+                    {it.emoji} {it.name}
+                    {plus > 0 && <span className="text-kw-red ml-0.5">+{plus}</span>}
+                  </div>
+                  {statLine && <div className="text-[9px] text-kw-text-dim">{statLine}</div>}
+                </div>
+              ) : (
+                <span className="flex-1 italic text-kw-text-dim truncate">— {label} —</span>
+              )}
+              {it && (
+                <button className="btn btn-xs btn-ghost" onClick={() => unequip(slot)} title={`ถอด ${label}`}>×</button>
+              )}
             </div>
-          ) : (
-            <span className="flex-1 italic text-kw-text-dim">ไม่ได้สวมอาวุธ</span>
-          )}
-          {wItem && (
-            <button className="btn btn-sm btn-ghost" onClick={() => unequip('weapon')}>ถอด</button>
-          )}
-        </div>
-        <div className="flex items-center gap-2 px-2 py-1.5 bg-white border-2 border-kw-border rounded text-[11px]">
-          <span className="text-xl">🛡</span>
-          {aItem ? (
-            <div className="flex-1 min-w-0">
-              <div className="font-bold text-kw-blue-deep truncate">
-                {aItem.emoji} {aItem.name}
-                {aPlus > 0 && <span className="text-kw-red ml-1">+{aPlus}</span>}
-              </div>
-              <div className="text-[10px] text-kw-text-dim">
-                DEF +{(aItem.def || 0) + enhancePlusDefBonus(aPlus)}
-              </div>
-            </div>
-          ) : (
-            <span className="flex-1 italic text-kw-text-dim">ไม่ได้สวมเกราะ</span>
-          )}
-          {aItem && (
-            <button className="btn btn-sm btn-ghost" onClick={() => unequip('armor')}>ถอด</button>
-          )}
-        </div>
+          )
+        })}
       </div>
 
       {/* Tabs */}
@@ -192,15 +222,27 @@ export function InventoryModal() {
                   ใช้
                 </button>
               )}
-              {(selItem.type === 'weapon' || selItem.type === 'armor') && !equipped && (
+              {sel && ALL_EQUIP_TYPES.includes(selItem.type) && !equipped && (
                 <button className="btn btn-sm" onClick={() => equip(sel.id)}>สวม</button>
               )}
-              {(selItem.type === 'weapon' || selItem.type === 'armor') && equipped && (
-                <button className="btn btn-sm btn-ghost"
-                  onClick={() => unequip(selItem.type === 'weapon' ? 'weapon' : 'armor')}>
-                  ถอด
-                </button>
-              )}
+              {sel && ALL_EQUIP_TYPES.includes(selItem.type) && equipped && (() => {
+                // Slice 52a: figure out which of 9 slots currently holds this row.
+                const slot: SlotName | null =
+                  sel.id === game.equipWeapon   ? 'weapon'   :
+                  sel.id === game.equipArmor    ? 'armor'    :
+                  sel.id === game.equipShield   ? 'shield'   :
+                  sel.id === game.equipHelmet   ? 'helmet'   :
+                  sel.id === game.equipBoots    ? 'boots'    :
+                  sel.id === game.equipCloak    ? 'cloak'    :
+                  sel.id === game.equipNecklace ? 'necklace' :
+                  sel.id === game.equipRing1    ? 'ring1'    :
+                  sel.id === game.equipRing2    ? 'ring2'    : null
+                return slot ? (
+                  <button className="btn btn-sm btn-ghost" onClick={() => unequip(slot)}>
+                    ถอด
+                  </button>
+                ) : null
+              })()}
             </div>
           </div>
         ) : (

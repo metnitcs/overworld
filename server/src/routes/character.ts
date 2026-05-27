@@ -3,6 +3,8 @@ import type { Character, InventoryItem as PrismaInventoryItem } from '@prisma/cl
 import { z } from 'zod'
 import {
   deriveStats, type GameState, type InventoryItem,
+  type ItemType, type EquipSlot,
+  ENHANCEABLE_TYPES, PRIMARY_EQUIP_SLOT_BY_TYPE,
   CHARACTER_SLOT_LIMIT, TRANSCEND_LV,
   CLASS_CHANGE_LV,
   STAT_BASE, STAT_HARD_CAP,
@@ -97,9 +99,45 @@ const changeClassSchema = z.object({
 const equipSchema = z.object({
   inventoryItemId: z.string().min(1),
 })
+// Slice 52a: unequip targets one of the 9 named slots.
 const unequipSchema = z.object({
-  slot: z.enum(['weapon', 'armor']),
+  slot: z.enum([
+    'weapon', 'armor', 'shield', 'helmet',
+    'boots', 'cloak', 'necklace', 'ring1', 'ring2',
+  ]),
 })
+
+// Slice 52a: slot name → Character column name (Prisma model). Used by
+// equip/unequip to flip the right FK.
+const SLOT_COLUMN: Record<EquipSlot, string> = {
+  weapon:   'equipWeaponId',
+  armor:    'equipArmorId',
+  shield:   'equipShieldId',
+  helmet:   'equipHelmetId',
+  boots:    'equipBootsId',
+  cloak:    'equipCloakId',
+  necklace: 'equipNecklaceId',
+  ring1:    'equipRing1Id',
+  ring2:    'equipRing2Id',
+}
+
+// Slice 52a: slot name → API/GameState field name (no "Id" suffix).
+// Used when building the deriveStats draft so the freshly-equipped slot
+// is visible to deriveCombatStats.
+const SLOT_API_FIELD: Record<EquipSlot, keyof GameState> = {
+  weapon:   'equipWeapon',
+  armor:    'equipArmor',
+  shield:   'equipShield',
+  helmet:   'equipHelmet',
+  boots:    'equipBoots',
+  cloak:    'equipCloak',
+  necklace: 'equipNecklace',
+  ring1:    'equipRing1',
+  ring2:    'equipRing2',
+}
+function slotForApiField(slot: EquipSlot): keyof GameState {
+  return SLOT_API_FIELD[slot]
+}
 
 /** Slice 40: consume intent — server applies the heal clamp + decrements
  *  inventory atomically so the client can't fake heal amounts or hold a
@@ -188,6 +226,14 @@ function toApiCharacter(
     inventory: inv,
     equipWeapon: c.equipWeaponId,
     equipArmor: c.equipArmorId,
+    // Slice 52a: 7 new equip slots.
+    equipShield:   c.equipShieldId,
+    equipHelmet:   c.equipHelmetId,
+    equipBoots:    c.equipBootsId,
+    equipCloak:    c.equipCloakId,
+    equipNecklace: c.equipNecklaceId,
+    equipRing1:    c.equipRing1Id,
+    equipRing2:    c.equipRing2Id,
     map: c.mapId,
     px: c.px,
     py: c.py,
@@ -276,6 +322,9 @@ export function registerCharacterRoutes(app: FastifyInstance): void {
       inventory: [],
       equipWeapon: null,
       equipArmor: null,
+      // Slice 52a: 7 new equip slots — all empty at creation.
+      equipShield: null, equipHelmet: null, equipBoots: null, equipCloak: null,
+      equipNecklace: null, equipRing1: null, equipRing2: null,
       map: 'village', px: 5, py: 5, steps: 0,
       transcended: false,
       classChanged: false,
@@ -599,10 +648,14 @@ export function registerCharacterRoutes(app: FastifyInstance): void {
   })
 
   // ─── POST /api/character/:id/equip — Slice 39 intent endpoint ─────────────
-  // Slice 47: targets an InventoryItem row by id (not itemKey). Per-instance
-  // means each weapon/armor has its own row; equip just flips the FK on the
-  // Character — the row itself stays put and keeps its Plus. UI hides any
-  // row whose id matches Character.equipWeaponId / equipArmorId.
+  // Slice 47: targets an InventoryItem row by id (per-instance gear).
+  // Slice 52a: handles 9 slots. Slot is derived from ItemDef.type with one
+  // wrinkle — type=`ring` has two slots (ring1, ring2). Strategy:
+  //   1. If the row is already in ring1 or ring2, no-op.
+  //   2. Else if ring1 is empty, fill ring1.
+  //   3. Else if ring2 is empty, fill ring2.
+  //   4. Else replace ring1 (displaced ring returns to bag — same row,
+  //      just FK cleared; UI re-shows it).
   app.post('/api/character/:id/equip', { preHandler: app.requireAuth }, async (req, reply) => {
     const parsed = equipSchema.safeParse(req.body)
     if (!parsed.success) {
@@ -623,23 +676,36 @@ export function registerCharacterRoutes(app: FastifyInstance): void {
     const bundle = await app.contentCache.get()
     const item = bundle.items[row.itemKey]
     if (!item) return reply.code(404).send({ error: 'item not found' })
-    if (item.type !== 'weapon' && item.type !== 'armor') {
-      return reply.code(400).send({ error: 'item is not equippable' })
+
+    // Slice 52a: pick the target slot.
+    let slot: EquipSlot
+    if (item.type === 'ring') {
+      if (existing.equipRing1Id === inventoryItemId || existing.equipRing2Id === inventoryItemId) {
+        return reply.send({ character: toApiCharacter(existing) }) // no-op
+      }
+      if (existing.equipRing1Id === null) slot = 'ring1'
+      else if (existing.equipRing2Id === null) slot = 'ring2'
+      else slot = 'ring1' // both full — displace ring1
+    } else {
+      const primary = PRIMARY_EQUIP_SLOT_BY_TYPE[item.type as ItemType]
+      if (!primary) {
+        return reply.code(400).send({ error: 'item is not equippable' })
+      }
+      slot = primary
     }
-    const slotField = item.type === 'weapon' ? 'equipWeaponId' : 'equipArmorId'
-    const currentlyEquipped = item.type === 'weapon' ? existing.equipWeaponId : existing.equipArmorId
+    const slotField = SLOT_COLUMN[slot]
+    const currentlyEquipped = (existing as unknown as Record<string, string | null>)[slotField]
 
     // Re-equipping the same row is a no-op.
     if (currentlyEquipped === inventoryItemId) {
       return reply.send({ character: toApiCharacter(existing) })
     }
 
-    // Re-derive stats with the new FK in place. The inventory list doesn't
-    // change (the equipped row stays in it; UI filters by id).
+    // Re-derive stats with the new FK in place.
     const draft: GameState & { id: string } = {
       ...toApiCharacter(existing),
-      ...(item.type === 'weapon' ? { equipWeapon: inventoryItemId } : { equipArmor: inventoryItemId }),
     }
+    ;(draft as unknown as Record<string, string | null>)[slotForApiField(slot)] = inventoryItemId
     const next = deriveStats(draft, { items: bundle.items })
 
     const updated = await app.prisma.$transaction(async (tx) => {
@@ -662,6 +728,7 @@ export function registerCharacterRoutes(app: FastifyInstance): void {
   // ─── POST /api/character/:id/unequip — Slice 39 intent endpoint ───────────
   // Slice 47: simply clear the FK. The InventoryItem row is unchanged and
   // its Plus is preserved (so re-equipping the same row restores +N).
+  // Slice 52a: handles all 9 slot names via SLOT_COLUMN/SLOT_API_FIELD.
   app.post('/api/character/:id/unequip', { preHandler: app.requireAuth }, async (req, reply) => {
     const parsed = unequipSchema.safeParse(req.body)
     if (!parsed.success) {
@@ -676,8 +743,8 @@ export function registerCharacterRoutes(app: FastifyInstance): void {
     if (!existing || existing.userId !== req.userId) {
       return reply.code(404).send({ error: 'character not found' })
     }
-    const slotField = slot === 'weapon' ? 'equipWeaponId' : 'equipArmorId'
-    const cleared = slot === 'weapon' ? existing.equipWeaponId : existing.equipArmorId
+    const slotField = SLOT_COLUMN[slot]
+    const cleared = (existing as unknown as Record<string, string | null>)[slotField]
     if (cleared === null) {
       return reply.send({ character: toApiCharacter(existing) }) // no-op
     }
@@ -685,8 +752,8 @@ export function registerCharacterRoutes(app: FastifyInstance): void {
 
     const draft: GameState & { id: string } = {
       ...toApiCharacter(existing),
-      ...(slot === 'weapon' ? { equipWeapon: null } : { equipArmor: null }),
     }
+    ;(draft as unknown as Record<string, string | null>)[slotForApiField(slot)] = null
     const next = deriveStats(draft, { items: bundle.items })
 
     const updated = await app.prisma.$transaction(async (tx) => {
@@ -940,12 +1007,20 @@ export function registerCharacterRoutes(app: FastifyInstance): void {
     const bundle = await app.contentCache.get()
     const item = bundle.items[target.itemKey]
     if (!item) return reply.code(404).send({ error: 'item not found' })
-    if (item.type !== 'weapon' && item.type !== 'armor') {
+    // Slice 52a: only weapon / armor / shield / helmet are enhanceable.
+    // The other gear types (boots, cloak, necklace, ring) deliver stats
+    // via Slice 51 bonusXxx fields and don't have a Plus curve.
+    if (!ENHANCEABLE_TYPES.includes(item.type as ItemType)) {
       return reply.code(400).send({ error: 'item is not enhanceable' })
     }
-    // Slice 48: Blacksmith refuses equipped items (U1). The player must
-    // unequip first — symmetric with the "ขอตี+ ตอนถอด" mental model.
-    if (target.id === existing.equipWeaponId || target.id === existing.equipArmorId) {
+    // Slice 48 + 52a: Blacksmith refuses any currently-equipped item.
+    // Check all 9 slots, not just weapon/armor.
+    const allEquippedIds = [
+      existing.equipWeaponId, existing.equipArmorId, existing.equipShieldId,
+      existing.equipHelmetId, existing.equipBootsId, existing.equipCloakId,
+      existing.equipNecklaceId, existing.equipRing1Id, existing.equipRing2Id,
+    ]
+    if (allEquippedIds.includes(target.id)) {
       return reply.code(409).send({ error: 'item is equipped' })
     }
 

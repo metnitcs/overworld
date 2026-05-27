@@ -55,6 +55,15 @@ export function enhancePlusDefBonus(plus: number): number {
   return lowTier + highTier
 }
 
+/** Slice 52a: every equipped slot the character has. Order matters only
+ *  for traversal in deriveCombatStats. Ring1+ring2 both contribute. */
+function equippedRowIds(g: GameState): (string | null)[] {
+  return [
+    g.equipWeapon, g.equipArmor, g.equipShield, g.equipHelmet,
+    g.equipBoots, g.equipCloak, g.equipNecklace, g.equipRing1, g.equipRing2,
+  ]
+}
+
 /** Pure derivation from primary stats + lv. Exposed for callers that need
  *  the raw numbers without mutating a full GameState (e.g. preview in the
  *  Status modal, server validation). */
@@ -62,13 +71,12 @@ export function deriveCombatStats(g: GameState, opts: DeriveOptions = {}): Deriv
   const items = opts.items ?? ITEMS
   const lvb = g.lv - 1
 
-  // Slice 51: fold equipped item primary stat bonuses into effective
-  // stats BEFORE deriving. Mat/consume rows never appear in equip slots
-  // (the equip endpoint guards ItemType), so we only need to read the
-  // two equipped rows.
+  // Slice 51 + 52a: fold per-item primary stat bonuses across ALL 9
+  // equipped slots into effective stats BEFORE deriving. Mat/consume
+  // never appear in equip slots (the equip endpoint guards ItemType).
   let effStr = g.str, effInt = g.int, effDex = g.dex
   let effAgi = g.agi, effLuk = g.luk, effVit = g.vit
-  for (const id of [g.equipWeapon, g.equipArmor]) {
+  for (const id of equippedRowIds(g)) {
     if (!id) continue
     const row = g.inventory.find((r) => r.id === id)
     if (!row) continue
@@ -94,7 +102,12 @@ export function deriveCombatStats(g: GameState, opts: DeriveOptions = {}): Deriv
   const dodge = Math.floor(g.lv * 0.5 + effAgi * 0.4)
   const crit  = Math.min(50, Math.floor(effLuk * 0.3))
 
-  // Equipment base + Plus step bonus (Slice 51 step scaling).
+  // Slot-typed equipment base + Plus step bonus (Slice 51 step scaling).
+  // Slice 52a expansion:
+  //   - weapon → atk + matk (Plus step on atk; staves also get matk step)
+  //   - armor / shield / helmet → def (Plus step on def)
+  //   - boots / cloak / necklace / ring → no slot-typed contribution
+  //     (their effect is purely the bonusXxx cascade above)
   if (g.equipWeapon) {
     const row = g.inventory.find(i => i.id === g.equipWeapon)
     if (row) {
@@ -104,13 +117,13 @@ export function deriveCombatStats(g: GameState, opts: DeriveOptions = {}): Deriv
       mAtk += (it?.matk || 0) + (it?.matk ? plusBonus : 0)
     }
   }
-  if (g.equipArmor) {
-    const row = g.inventory.find(i => i.id === g.equipArmor)
-    if (row) {
-      const it = items[row.itemKey]
-      pDef += (it?.def  || 0) + enhancePlusDefBonus(row.plus)
-      mDef += (it?.matk || 0)
-    }
+  for (const id of [g.equipArmor, g.equipShield, g.equipHelmet]) {
+    if (!id) continue
+    const row = g.inventory.find(i => i.id === id)
+    if (!row) continue
+    const it = items[row.itemKey]
+    pDef += (it?.def || 0) + enhancePlusDefBonus(row.plus)
+    mDef += (it?.matk || 0) // legacy carry-through
   }
 
   return { maxHp, maxMp, pAtk, mAtk, pDef, mDef, spd, acc, dodge, crit }

@@ -184,7 +184,35 @@ export interface MapDef {
   layout?: TileDef[][]
 }
 
-export type ItemType = 'mat' | 'consume' | 'weapon' | 'armor'
+/** Slice 52a: extended from 4 → 10 types. The 6 new equipment types
+ *  follow CONTEXT.md "Equipment Slot" rules:
+ *  - shield / helmet → enhanceable, contribute def (slot-typed)
+ *  - boots / cloak / necklace / ring → not enhanceable; deliver stats
+ *    purely via Slice 51 per-item primary stat bonuses (bonusXxx) */
+export type ItemType =
+  | 'mat' | 'consume'
+  | 'weapon' | 'armor' | 'shield' | 'helmet'
+  | 'boots' | 'cloak' | 'necklace' | 'ring'
+
+/** Slice 52a: the named equip slots on a Character. Ring has two slots
+ *  (ring1, ring2) — both accept ItemType=`ring`. */
+export type EquipSlot =
+  | 'weapon' | 'armor' | 'shield' | 'helmet'
+  | 'boots' | 'cloak' | 'necklace' | 'ring1' | 'ring2'
+
+/** Slice 52a: gear types whose Plus level scales a combat stat via the
+ *  step curves (atk for weapon, def for armor/shield/helmet). Helper for
+ *  Blacksmith adjacency check + UI gating. */
+export const ENHANCEABLE_TYPES: readonly ItemType[] = ['weapon', 'armor', 'shield', 'helmet']
+
+/** Slice 52a: which Character.equipXxxId FK a given ItemType targets when
+ *  the equip endpoint must derive the slot from the item's type. Ring
+ *  needs runtime "ring1 or ring2" disambiguation — see equipSlotForItem. */
+export const PRIMARY_EQUIP_SLOT_BY_TYPE: Partial<Record<ItemType, EquipSlot>> = {
+  weapon: 'weapon', armor: 'armor', shield: 'shield', helmet: 'helmet',
+  boots: 'boots', cloak: 'cloak', necklace: 'necklace',
+  // ring intentionally absent — caller picks ring1 vs ring2 dynamically
+}
 
 export type Rarity = 'common' | 'rare' | 'epic' | 'legendary'
 
@@ -283,9 +311,18 @@ export interface GameState {
   inventory: InventoryItem[]
   /** Slice 47: FK to the equipped InventoryItem.id (was an itemKey string).
    *  null = nothing equipped. The equipped row stays in `inventory[]`; the
-   *  UI filters it out of the bag view. */
+   *  UI filters it out of the bag view.
+   *  Slice 52a: expanded from 2 → 9 slots. Ring has two slots (ring1, ring2)
+   *  that both accept ItemType=`ring`. */
   equipWeapon: string | null
   equipArmor: string | null
+  equipShield: string | null
+  equipHelmet: string | null
+  equipBoots: string | null
+  equipCloak: string | null
+  equipNecklace: string | null
+  equipRing1: string | null
+  equipRing2: string | null
   map: string
   px: number
   py: number

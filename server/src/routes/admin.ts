@@ -4,12 +4,42 @@ import path from 'node:path'
 import fs from 'node:fs'
 import crypto from 'node:crypto'
 import { pipeline } from 'node:stream/promises'
-import { deriveStats, type GameState, type InventoryItem } from '@asura/shared'
+import { deriveStats, type GameState, type InventoryItem, ENHANCEABLE_TYPES } from '@asura/shared'
 import { addItem } from '../lib/inventory.js'
+
+/** Slice 52a: project all 9 equip*Id columns from a Prisma Character row
+ *  into the API shape (no "Id" suffix). Avoids repeating the 9 fields at
+ *  every response + every re-derive draft site in this file. */
+function equipFieldsFromRow(c: {
+  equipWeaponId: string | null; equipArmorId: string | null
+  equipShieldId: string | null; equipHelmetId: string | null
+  equipBootsId: string | null; equipCloakId: string | null
+  equipNecklaceId: string | null
+  equipRing1Id: string | null; equipRing2Id: string | null
+}) {
+  return {
+    equipWeapon:   c.equipWeaponId,
+    equipArmor:    c.equipArmorId,
+    equipShield:   c.equipShieldId,
+    equipHelmet:   c.equipHelmetId,
+    equipBoots:    c.equipBootsId,
+    equipCloak:    c.equipCloakId,
+    equipNecklace: c.equipNecklaceId,
+    equipRing1:    c.equipRing1Id,
+    equipRing2:    c.equipRing2Id,
+  }
+}
 
 // ─── Schemas ──────────────────────────────────────────────────────────────
 
-const itemTypeEnum = z.enum(['mat', 'consume', 'weapon', 'armor'])
+// Slice 52a: extended from 4 → 10 ItemType values. shield/helmet/boots/
+// cloak/necklace/ring are equipment-only (mat/consume separate, weapon/
+// armor pre-Slice 52a).
+const itemTypeEnum = z.enum([
+  'mat', 'consume',
+  'weapon', 'armor', 'shield', 'helmet',
+  'boots', 'cloak', 'necklace', 'ring',
+])
 const rarityEnum = z.enum(['common', 'rare', 'epic', 'legendary'])
 const monsterRankEnum = z.enum(['normal', 'elite', 'boss'])
 
@@ -613,8 +643,7 @@ export function registerAdminRoutes(app: FastifyInstance): void {
           unspentPoints: c.unspentPoints,
           hp: c.hp, maxHp: c.maxHp, mp: c.mp, maxMp: c.maxMp,
           atk: c.atk, def: c.def, spd: c.spd,
-          equipWeapon: c.equipWeaponId,
-          equipArmor: c.equipArmorId,
+          ...equipFieldsFromRow(c),
           inventory: c.inventory.map((it) => ({
             id: it.id, itemKey: it.itemKey, qty: it.qty, plus: it.plus,
           })),
@@ -663,7 +692,7 @@ export function registerAdminRoutes(app: FastifyInstance): void {
           inventory: after.inventory.map((it) => ({
             id: it.id, itemKey: it.itemKey, qty: it.qty, plus: it.plus,
           })),
-          equipWeapon: after.equipWeaponId, equipArmor: after.equipArmorId,
+          ...equipFieldsFromRow(after),
           map: after.mapId, px: after.px, py: after.py, steps: after.steps,
           transcended: after.transcended, classChanged: after.classChanged,
         }
@@ -709,8 +738,7 @@ export function registerAdminRoutes(app: FastifyInstance): void {
         unspentPoints: updated.unspentPoints,
         hp: updated.hp, maxHp: updated.maxHp, mp: updated.mp, maxMp: updated.maxMp,
         atk: updated.atk, def: updated.def, spd: updated.spd,
-        equipWeapon: updated.equipWeaponId,
-        equipArmor: updated.equipArmorId,
+        ...equipFieldsFromRow(updated),
         inventory: updated.inventory.map((it) => ({
           id: it.id, itemKey: it.itemKey, qty: it.qty, plus: it.plus,
         })),
@@ -755,8 +783,11 @@ export function registerAdminRoutes(app: FastifyInstance): void {
     const bundle = await app.contentCache.get()
     const item = bundle.items[row.itemKey]
     if (!item) return reply.code(404).send({ error: 'item def not found' })
-    if (item.type !== 'weapon' && item.type !== 'armor') {
-      return reply.code(400).send({ error: 'plus only applies to weapon/armor' })
+    // Slice 52a: Plus applies only to enhanceable types
+    // (weapon / armor / shield / helmet). Boots / cloak / necklace / ring
+    // deliver stats purely via Slice 51 bonusXxx — they have no Plus curve.
+    if (!ENHANCEABLE_TYPES.includes(item.type)) {
+      return reply.code(400).send({ error: 'plus only applies to weapon/armor/shield/helmet' })
     }
 
     const owner = await app.prisma.character.findUniqueOrThrow({
@@ -778,7 +809,7 @@ export function registerAdminRoutes(app: FastifyInstance): void {
       unspentPoints: owner.unspentPoints,
       gold: owner.gold,
       inventory: nextInventory,
-      equipWeapon: owner.equipWeaponId, equipArmor: owner.equipArmorId,
+      ...equipFieldsFromRow(owner),
       map: owner.mapId, px: owner.px, py: owner.py, steps: owner.steps,
       transcended: owner.transcended, classChanged: owner.classChanged,
     }
@@ -827,8 +858,9 @@ export function registerAdminRoutes(app: FastifyInstance): void {
     if (!def) return reply.code(404).send({ error: 'item def not found' })
     // Plus is meaningful only for weapon/armor — reject if the admin sets
     // it on a stackable type so a future read doesn't have to wonder.
-    if (plus !== undefined && def.type !== 'weapon' && def.type !== 'armor') {
-      return reply.code(400).send({ error: 'plus only applies to weapon/armor' })
+    // Slice 52a: Plus valid on weapon / armor / shield / helmet.
+    if (plus !== undefined && !ENHANCEABLE_TYPES.includes(def.type)) {
+      return reply.code(400).send({ error: 'plus only applies to weapon/armor/shield/helmet' })
     }
 
     await app.prisma.$transaction(async (tx) => {
@@ -862,7 +894,13 @@ export function registerAdminRoutes(app: FastifyInstance): void {
     const owner = await app.prisma.character.findUniqueOrThrow({
       where: { id: row.characterId }, include: { inventory: true },
     })
-    const wasEquipped = row.id === owner.equipWeaponId || row.id === owner.equipArmorId
+    // Slice 52a: check all 9 equip slots, not just weapon/armor.
+    const allEquippedIds = [
+      owner.equipWeaponId, owner.equipArmorId, owner.equipShieldId,
+      owner.equipHelmetId, owner.equipBootsId, owner.equipCloakId,
+      owner.equipNecklaceId, owner.equipRing1Id, owner.equipRing2Id,
+    ]
+    const wasEquipped = allEquippedIds.includes(row.id)
 
     await app.prisma.$transaction(async (tx) => {
       await tx.inventoryItem.delete({ where: { id: row.id } })
@@ -886,7 +924,7 @@ export function registerAdminRoutes(app: FastifyInstance): void {
           inventory: fresh.inventory.map((it): InventoryItem => ({
             id: it.id, itemKey: it.itemKey, qty: it.qty, plus: it.plus,
           })),
-          equipWeapon: fresh.equipWeaponId, equipArmor: fresh.equipArmorId,
+          ...equipFieldsFromRow(fresh),
           map: fresh.mapId, px: fresh.px, py: fresh.py, steps: fresh.steps,
           transcended: fresh.transcended, classChanged: fresh.classChanged,
         }

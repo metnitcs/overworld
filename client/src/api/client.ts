@@ -58,7 +58,11 @@ export interface MeResponse {
 
 // ─── Admin-facing wire shapes ───────────────────────────────────────────────
 
-export type AdminItemType = 'mat' | 'consume' | 'weapon' | 'armor'
+// Slice 52a: 4 → 10 types. Mirrors shared `ItemType`.
+export type AdminItemType =
+  | 'mat' | 'consume'
+  | 'weapon' | 'armor' | 'shield' | 'helmet'
+  | 'boots' | 'cloak' | 'necklace' | 'ring'
 export type AdminRarity = 'common' | 'rare' | 'epic' | 'legendary'
 export type AdminMonsterRank = 'normal' | 'elite' | 'boss'
 
@@ -220,9 +224,17 @@ export interface AdminCharacterRow {
   atk: number
   def: number
   spd: number
-  /** Slice 47: FK to the equipped InventoryItem.id (was an itemKey string). */
+  /** Slice 47: FK to the equipped InventoryItem.id (was an itemKey string).
+   *  Slice 52a: expanded from 2 → 9 slots. */
   equipWeapon: string | null
   equipArmor: string | null
+  equipShield: string | null
+  equipHelmet: string | null
+  equipBoots: string | null
+  equipCloak: string | null
+  equipNecklace: string | null
+  equipRing1: string | null
+  equipRing2: string | null
   /** Slice 47: per-instance rows. weapon/armor: 1 row per physical item with
    *  its own `plus`; mat/consume: 1 row per (charId, itemKey) with qty. */
   inventory: Array<{ id: string; itemKey: string; qty: number; plus: number }>
@@ -415,8 +427,11 @@ export const api = {
     }),
 
   /** Slice 47 — clear the named equip slot. Just sets the FK to null; the
-   *  InventoryItem row is untouched (Plus preserved across re-equip). */
-  unequipCharacter: (token: string, id: string, slot: 'weapon' | 'armor') =>
+   *  InventoryItem row is untouched (Plus preserved across re-equip).
+   *  Slice 52a: 9 named slots (was 2). */
+  unequipCharacter: (token: string, id: string, slot:
+    'weapon' | 'armor' | 'shield' | 'helmet' | 'boots' | 'cloak' | 'necklace' | 'ring1' | 'ring2'
+  ) =>
     request<CharacterResponse>(`/api/character/${id}/unequip`, {
       method: 'POST', token, body: { slot },
     }),

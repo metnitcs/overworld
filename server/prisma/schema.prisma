@@ -90,17 +90,33 @@ model Character {
   px            Int             @default(5)
   py            Int             @default(5)
   steps         Int             @default(0)
-  /// Slice 47: per-instance gear. equipWeapon/Armor are now FKs to the
-  /// equipped InventoryItem row (not itemKey). Unique on each side so a
-  /// given InventoryItem can only be equipped by one Character at a time
-  /// (it should always be its owner — guarded at the application layer).
+  /// Slice 47: per-instance gear. Each equip*Id is a FK to the equipped
+  /// InventoryItem row (not itemKey). Unique on each side so a given
+  /// InventoryItem can only be equipped by one Character at a time.
   /// ON DELETE SET NULL so selling/dropping an equipped item clears the
-  /// slot automatically. Character.plus is gone — Plus now lives on the
-  /// InventoryItem row itself, per [[adr-002-per-instance-gear-inventory]].
-  equipWeaponId String?         @unique
-  equipWeapon   InventoryItem?  @relation("EquipWeapon", fields: [equipWeaponId], references: [id], onDelete: SetNull)
-  equipArmorId  String?         @unique
-  equipArmor    InventoryItem?  @relation("EquipArmor", fields: [equipArmorId], references: [id], onDelete: SetNull)
+  /// slot automatically.
+  /// Slice 52a: expanded from 2 slots (weapon/armor) to 9 — adds shield,
+  /// helmet, boots, cloak, necklace, ring×2. Per CONTEXT.md "Equipment
+  /// Slot". Ring1+ring2 both accept ItemType=`ring`; the equip endpoint
+  /// auto-fills the empty slot first.
+  equipWeaponId   String?         @unique
+  equipWeapon     InventoryItem?  @relation("EquipWeapon", fields: [equipWeaponId], references: [id], onDelete: SetNull)
+  equipArmorId    String?         @unique
+  equipArmor      InventoryItem?  @relation("EquipArmor", fields: [equipArmorId], references: [id], onDelete: SetNull)
+  equipShieldId   String?         @unique
+  equipShield     InventoryItem?  @relation("EquipShield", fields: [equipShieldId], references: [id], onDelete: SetNull)
+  equipHelmetId   String?         @unique
+  equipHelmet     InventoryItem?  @relation("EquipHelmet", fields: [equipHelmetId], references: [id], onDelete: SetNull)
+  equipBootsId    String?         @unique
+  equipBoots      InventoryItem?  @relation("EquipBoots", fields: [equipBootsId], references: [id], onDelete: SetNull)
+  equipCloakId    String?         @unique
+  equipCloak      InventoryItem?  @relation("EquipCloak", fields: [equipCloakId], references: [id], onDelete: SetNull)
+  equipNecklaceId String?         @unique
+  equipNecklace   InventoryItem?  @relation("EquipNecklace", fields: [equipNecklaceId], references: [id], onDelete: SetNull)
+  equipRing1Id    String?         @unique
+  equipRing1      InventoryItem?  @relation("EquipRing1", fields: [equipRing1Id], references: [id], onDelete: SetNull)
+  equipRing2Id    String?         @unique
+  equipRing2      InventoryItem?  @relation("EquipRing2", fields: [equipRing2Id], references: [id], onDelete: SetNull)
   /// Slice 17: true after the Lv 10 race-change quest has resolved. Gates
   /// the RaceChangeModal so it fires exactly once.
   transcended   Boolean         @default(false)
@@ -122,17 +138,26 @@ model Character {
 /// by the `addItem` server helper, not by a DB constraint, because we need
 /// both shapes in the same table. See ADR 0003.
 model InventoryItem {
-  id                 String     @id @default(cuid())
-  characterId        String
-  character          Character  @relation("CharacterInventory", fields: [characterId], references: [id], onDelete: Cascade)
-  itemKey            String // e.g. 'potion-s', 'sword-1'
-  qty                Int        @default(1)
-  /// Plus level (0..10) for weapon/armor instances. Always 0 for mat/consume.
-  plus               Int        @default(0)
-  /// Backrefs for the Character.equipWeapon/equipArmor FKs (Prisma needs them
-  /// to materialise the relation). Should be null on the vast majority of rows.
-  equippedAsWeaponOn Character? @relation("EquipWeapon")
-  equippedAsArmorOn  Character? @relation("EquipArmor")
+  id                   String     @id @default(cuid())
+  characterId          String
+  character            Character  @relation("CharacterInventory", fields: [characterId], references: [id], onDelete: Cascade)
+  itemKey              String // e.g. 'potion-s', 'sword-1'
+  qty                  Int        @default(1)
+  /// Plus level (0..10) for enhanceable gear (weapon/armor/shield/helmet).
+  /// Always 0 for mat/consume/boots/cloak/necklace/ring.
+  plus                 Int        @default(0)
+  /// Backrefs for every Character.equip*Id FK (Prisma needs them to materialise
+  /// the relation). Should be null on the vast majority of rows.
+  /// Slice 52a: expanded from 2 → 9 slots.
+  equippedAsWeaponOn   Character? @relation("EquipWeapon")
+  equippedAsArmorOn    Character? @relation("EquipArmor")
+  equippedAsShieldOn   Character? @relation("EquipShield")
+  equippedAsHelmetOn   Character? @relation("EquipHelmet")
+  equippedAsBootsOn    Character? @relation("EquipBoots")
+  equippedAsCloakOn    Character? @relation("EquipCloak")
+  equippedAsNecklaceOn Character? @relation("EquipNecklace")
+  equippedAsRing1On    Character? @relation("EquipRing1")
+  equippedAsRing2On    Character? @relation("EquipRing2")
 
   @@index([characterId, itemKey])
 }
@@ -190,6 +215,16 @@ enum ItemType {
   consume
   weapon
   armor
+  /// Slice 52a: expanded equipment slot types.
+  /// - shield / helmet → enhanceable, contribute def (slot-typed)
+  /// - boots / cloak / necklace / ring → not enhanceable; deliver stats
+  ///   purely via Slice 51 per-item primary stat bonuses (bonusXxx)
+  shield
+  helmet
+  boots
+  cloak
+  necklace
+  ring
 }
 
 enum Rarity {

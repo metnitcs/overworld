@@ -16,6 +16,9 @@ function gs(overrides: Partial<GameState> = {}): GameState {
     agi: STAT_BASE, luk: STAT_BASE, vit: STAT_BASE,
     unspentPoints: 0,
     inventory: [], equipWeapon: null, equipArmor: null,
+    // Slice 52a: 7 new equip slots — all null in the fixture.
+    equipShield: null, equipHelmet: null, equipBoots: null, equipCloak: null,
+    equipNecklace: null, equipRing1: null, equipRing2: null,
     map: 'village', px: 0, py: 0, steps: 0,
     transcended: false, classChanged: false,
     ...overrides,

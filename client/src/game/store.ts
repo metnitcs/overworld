@@ -194,9 +194,11 @@ interface Store {
   spendMp: (amt: number) => void
   // Inventory / equip
   /** Slice 47: equip/unequip target a specific InventoryItem row (gear is
-   *  per-instance now). UI clicks the row in the bag list and passes its id. */
+   *  per-instance now). UI clicks the row in the bag list and passes its id.
+   *  Slice 52a: unequip takes one of 9 named slots. equip auto-derives the
+   *  slot from item type (server handles ring1/ring2 auto-fill). */
   equip: (inventoryItemId: string) => void
-  unequip: (slot: 'weapon' | 'armor') => void
+  unequip: (slot: 'weapon' | 'armor' | 'shield' | 'helmet' | 'boots' | 'cloak' | 'necklace' | 'ring1' | 'ring2') => void
   useConsume: (itemKey: string) => void
   spendGold: (amt: number) => boolean
   gainGold: (amt: number) => void
@@ -240,6 +242,9 @@ const initialGame: GameState = {
   inventory: [],
   equipWeapon: null,
   equipArmor: null,
+  // Slice 52a: 7 new equip slots — all empty until server hydrates.
+  equipShield: null, equipHelmet: null, equipBoots: null, equipCloak: null,
+  equipNecklace: null, equipRing1: null, equipRing2: null,
   map: 'village',
   px: 5, py: 5,
   steps: 0,

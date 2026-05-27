@@ -16,6 +16,9 @@ function gs(overrides: Partial<GameState> = {}): GameState {
     agi: STAT_BASE, luk: STAT_BASE, vit: STAT_BASE,
     unspentPoints: 0,
     inventory: [], equipWeapon: null, equipArmor: null,
+    // Slice 52a: 7 new equip slots — all null in the fixture.
+    equipShield: null, equipHelmet: null, equipBoots: null, equipCloak: null,
+    equipNecklace: null, equipRing1: null, equipRing2: null,
     map: 'village', px: 0, py: 0, steps: 0,
     transcended: false, classChanged: false,
     ...overrides,
@@ -23,20 +26,31 @@ function gs(overrides: Partial<GameState> = {}): GameState {
 }
 
 /** Slice 47: helper to build a GameState whose equipWeapon/Armor FK points
- *  at a synthesised InventoryItem row carrying the given itemKey + plus. */
-function gsWith(eq: { weapon?: { itemKey: string; plus?: number }; armor?: { itemKey: string; plus?: number } }, overrides: Partial<GameState> = {}): GameState {
+ *  at a synthesised InventoryItem row carrying the given itemKey + plus.
+ *  Slice 52a: extended to all 9 equip slots. Each key matches the
+ *  GameState.equipXxx field name (weapon, armor, shield, helmet, boots,
+ *  cloak, necklace, ring1, ring2). */
+type GearSpec = { itemKey: string; plus?: number }
+type GsEq = Partial<Record<
+  'weapon' | 'armor' | 'shield' | 'helmet' | 'boots' | 'cloak' | 'necklace' | 'ring1' | 'ring2',
+  GearSpec
+>>
+function gsWith(eq: GsEq, overrides: Partial<GameState> = {}): GameState {
   const inv: GameState['inventory'] = []
-  let weaponId: string | null = null
-  let armorId: string | null = null
-  if (eq.weapon) {
-    weaponId = 'iv-w'
-    inv.push({ id: weaponId, itemKey: eq.weapon.itemKey, qty: 1, plus: eq.weapon.plus ?? 0 })
+  const equipPatch: Partial<GameState> = {}
+  const slotToField = {
+    weapon: 'equipWeapon', armor: 'equipArmor', shield: 'equipShield',
+    helmet: 'equipHelmet', boots: 'equipBoots', cloak: 'equipCloak',
+    necklace: 'equipNecklace', ring1: 'equipRing1', ring2: 'equipRing2',
+  } as const
+  let idx = 0
+  for (const [slot, spec] of Object.entries(eq) as [keyof GsEq, GearSpec][]) {
+    if (!spec) continue
+    const id = `iv-${idx++}`
+    inv.push({ id, itemKey: spec.itemKey, qty: 1, plus: spec.plus ?? 0 })
+    ;(equipPatch as Record<string, string>)[slotToField[slot]] = id
   }
-  if (eq.armor) {
-    armorId = 'iv-a'
-    inv.push({ id: armorId, itemKey: eq.armor.itemKey, qty: 1, plus: eq.armor.plus ?? 0 })
-  }
-  return gs({ inventory: inv, equipWeapon: weaponId, equipArmor: armorId, ...overrides })
+  return gs({ inventory: inv, ...equipPatch, ...overrides })
 }
 
 describe('deriveStats — primary-stat formulas', () => {
@@ -136,6 +150,54 @@ describe('deriveStats — primary-stat formulas', () => {
     // effVit = 10 + 5 = 15 → maxHp = 50 + 15*10 = 200 (BASE_HP 50)
     expect(d.maxHp).toBe(BASE_HP + 15 * 10)
     // pDef from effVit too: floor(15*0.5) = 7
+    expect(d.pDef).toBe(7)
+  })
+
+  it('Slice 52a: shield + helmet contribute def with Plus step bonus', () => {
+    const itemsOverride: Record<string, import('../types').ItemDef> = {
+      'iron-shield':  { name: 'IS', emoji: '🛡', type: 'shield', def: 4, desc: 'test' },
+      'iron-helmet':  { name: 'IH', emoji: '🪖', type: 'helmet', def: 3, desc: 'test' },
+    }
+    // Plus 6 → enhancePlusDefBonus(6) = 8 (cumulative)
+    const g = gsWith({
+      shield: { itemKey: 'iron-shield', plus: 6 },
+      helmet: { itemKey: 'iron-helmet', plus: 0 },
+    }, { lv: 1 })
+    const d = deriveCombatStats(g, { items: itemsOverride })
+    // base pDef = floor(10*0.5) = 5
+    // shield: +4 + 8 (Plus step) = 12
+    // helmet: +3 + 0 = 3
+    // total pDef = 5 + 12 + 3 = 20
+    expect(d.pDef).toBe(20)
+  })
+
+  it('Slice 52a: boots / cloak / necklace / ring deliver via bonusXxx only (no slot-typed contribution)', () => {
+    const itemsOverride: Record<string, import('../types').ItemDef> = {
+      'speed-boots': { name: 'SB', emoji: '👢', type: 'boots',    bonusAgi: 8, desc: 'test' },
+      'mage-cloak':  { name: 'MC', emoji: '🧥', type: 'cloak',    bonusInt: 6, desc: 'test' },
+      'ruby-neck':   { name: 'RN', emoji: '📿', type: 'necklace', bonusInt: 4, desc: 'test' },
+      'crit-ring':   { name: 'CR', emoji: '💍', type: 'ring',     bonusLuk: 10, desc: 'test' },
+      'hp-ring':     { name: 'HR', emoji: '💍', type: 'ring',     bonusVit: 5, desc: 'test' },
+    }
+    const g = gsWith({
+      boots:    { itemKey: 'speed-boots' },
+      cloak:    { itemKey: 'mage-cloak' },
+      necklace: { itemKey: 'ruby-neck' },
+      ring1:    { itemKey: 'crit-ring' },
+      ring2:    { itemKey: 'hp-ring' },
+    }, { lv: 1 })
+    const d = deriveCombatStats(g, { items: itemsOverride })
+    // effAgi = 10 + 8 = 18 → spd = floor(18*0.5) = 9; dodge = floor(0.5 + 7.2) = 7
+    expect(d.spd).toBe(9)
+    expect(d.dodge).toBe(7)
+    // effInt = 10 + 6 + 4 = 20 → mAtk = 20*2 = 40; mDef = floor(20*0.5) = 10; maxMp = 20 + 60 = 80
+    expect(d.mAtk).toBe(40)
+    expect(d.mDef).toBe(10)
+    expect(d.maxMp).toBe(80)
+    // effLuk = 10 + 10 = 20 → crit = floor(20*0.3) = 6
+    expect(d.crit).toBe(6)
+    // effVit = 10 + 5 = 15 → maxHp = 50 + 150 = 200; pDef = floor(15*0.5) = 7
+    expect(d.maxHp).toBe(BASE_HP + 150)
     expect(d.pDef).toBe(7)
   })
 

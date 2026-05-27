@@ -69,9 +69,16 @@ A single row in `InventoryItem`, the canonical entity for "a thing the Character
 _Avoid_: "item slot" (overloaded with Equipment Slot), "stack" (only meaningful for mat/consume).
 
 **Equipment Slot**:
-A named slot on the Character that holds at most one equipped Inventory Item: currently `equipWeapon` and `equipArmor`. Each slot is a foreign key from `Character` to `InventoryItem.id`. **Transfer model is logical, not physical**: the equipped Inventory Item stays in the `InventoryItem` table; the Inventory list filters out any row whose id appears in an Equipment Slot, so the player never sees the same item in two places. Unequipping = clearing the FK; the item's `id` and Plus level are unchanged.
+A named slot on the Character that holds at most one equipped Inventory Item. **Slice 52a: nine slots** — `equipWeapon`, `equipArmor`, `equipShield`, `equipHelmet`, `equipBoots`, `equipCloak`, `equipNecklace`, `equipRing1`, `equipRing2`. Each is a foreign key from `Character` to `InventoryItem.id`. **Transfer model is logical, not physical**: the equipped Inventory Item stays in the `InventoryItem` table; the Inventory list filters out any row whose id appears in any Equipment Slot, so the player never sees the same item in two places. Unequipping = clearing the FK; the item's `id` and Plus level are unchanged.
+
+The 9 slots split by behavior:
+
+- **Enhanceable** (Plus step scales the slot-typed stat): weapon → ATK, armor / shield / helmet → DEF
+- **Bonus-only** (Plus does nothing — Blacksmith refuses): boots, cloak, necklace, ring×2 — these deliver effects purely through Slice 51 per-item primary stat bonuses (`bonusStr/Int/Dex/Agi/Luk/Vit`)
+
+Ring has two slots (`ring1`, `ring2`) that both accept ItemType=`ring`. The equip endpoint auto-fills the empty ring slot first; if both are full it displaces ring1.
 _Avoid_: "equip pointer" — that was the rejected Slice 36 model where an item shown as equipped was also still listed in the bag.
-_History_: Slice 33 introduced Transfer. Slice 36 reverted to a Pointer model (Demon-Online style). Slice 46 returned to Transfer (physical move). Slice 47+ refines this further: per-instance identity for gear forces the slot to reference an Inventory Item id (not an itemKey), so "transfer" becomes a display rule rather than a row movement — the item's identity and Plus level can't be lost in transit.
+_History_: Slice 33 introduced Transfer. Slice 36 reverted to a Pointer model (Demon-Online style). Slice 46 returned to Transfer (physical move). Slice 47 made the slot reference an Inventory Item id (per-instance identity). Slice 52a expanded from 2 → 9 slots.
 
 **Plus**:
 A non-negative integer (0..10) attached to a single weapon or armor Inventory Item, representing how many successful Enhance attempts it has accumulated. Plus contributes a **step-scaled** bonus to the slot's primary combat stat: `enhancePlusAtkBonus(plus)` for weapon ATK (`+1..+5` = +2 each, `+6..+10` = +5 each, max +35 at +10) and `enhancePlusDefBonus(plus)` for armor DEF (`+1..+5` = +1 each, `+6..+10` = +3 each, max +20 at +10). Mat and consume items never carry a Plus. Two Inventory Items of the same itemKey can have different Plus values — that is the whole reason gear is per-instance. Per-item primary stat bonuses (see Item Stat) are NOT affected by Plus.
@@ -88,10 +95,13 @@ _Avoid_: "smith", "enhancer", "refiner".
 **Item Stat**:
 A field on an ItemDef that contributes to a Character's combat stats when the Item is equipped. Two flavors:
 
-- **Slot-typed stats** (Slice 23): Weapon contributes `atk` and `matk`; Armor contributes `def`. Cross-slot values (an `atk` on an Armor) are ignored at runtime. The admin form should not offer fields the slot's contribution rule will ignore.
-- **Primary stat bonuses** (Slice 51): Both Weapons and Armors may carry `bonusStr / bonusInt / bonusDex / bonusAgi / bonusLuk / bonusVit`. These fold into the Character's effective primary stats BEFORE the derived formulas run, so a sword with `bonusVit: 5` raises maxHp, pDef, and every other VIT-derived stat — not just one combat number. Flat — NOT scaled by Plus.
+- **Slot-typed stats** (Slice 23 → 52a): contribution rule depends on the item type, not the field:
+  - `weapon` → `atk` + `matk`
+  - `armor` / `shield` / `helmet` → `def`
+  - `boots` / `cloak` / `necklace` / `ring` → no slot-typed contribution
+- **Primary stat bonuses** (Slice 51): all 8 equippable types may carry `bonusStr / bonusInt / bonusDex / bonusAgi / bonusLuk / bonusVit`. These fold into the Character's effective primary stats BEFORE the derived formulas run, so a sword with `bonusVit: 5` raises maxHp, pDef, and every other VIT-derived stat — not just one combat number. Flat — NOT scaled by Plus.
 
-**Plus** scales only `atk` (Weapon) and `def` (Armor) — via the `enhancePlusAtkBonus` / `enhancePlusDefBonus` step curves. Per-item primary bonuses are independent of Plus.
+**Plus** scales only `atk` (Weapon) and `def` (Armor / Shield / Helmet) — via the `enhancePlusAtkBonus` / `enhancePlusDefBonus` step curves. The four non-enhanceable types (boots / cloak / necklace / ring) deliver everything through bonus primary stats — Blacksmith refuses to enhance them.
 
 ## Input language
 
